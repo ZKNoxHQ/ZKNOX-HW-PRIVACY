@@ -1,5 +1,5 @@
 /*****************************************************************************
- *   ZKNOX privacy primitives — home and settings pages.
+ *   ZKNOX-HW-PRIVACY — home and settings pages.
  *
  *   Derived from the Ledger App Boilerplate.
  *   (c) 2020 Ledger SAS. (c) 2025 ZKNOX SAS.

@@ -1,4 +1,4 @@
-"""APDU client for the ZKNOX privacy-primitives app.
+"""APDU client for the ZKNOX-HW-PRIVACY app.
 
 One method per instruction, plus the enums the tests assert against. The
 `_async` variants return the ragger context manager, so a test can drive

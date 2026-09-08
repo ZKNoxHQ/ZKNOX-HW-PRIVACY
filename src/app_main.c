@@ -1,5 +1,5 @@
 /*****************************************************************************
- *   ZKNOX privacy primitives — main APDU loop.
+ *   ZKNOX-HW-PRIVACY — main APDU loop.
  *
  *   Derived from the Ledger App Boilerplate.
  *   (c) 2020 Ledger SAS. (c) 2025 ZKNOX SAS.
@@ -112,6 +112,9 @@ void app_main()
             }
             CATCH_OTHER(e)
             {
+                /* PRINTF compiles to nothing unless the SDK's DEBUG is on,
+                 * which would leave `e` set-but-unused. */
+                UNUSED(e);
                 PRINTF("=> caught BOLOS exception 0x%08X — exiting fail-closed\n", e);
                 os_sched_exit(-1);
                 return;

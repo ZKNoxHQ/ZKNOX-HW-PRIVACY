@@ -1,4 +1,4 @@
-# ZKNOX privacy primitives — Ledger application
+# ZKNOX-HW-PRIVACY
 
 A Ledger app that exposes **generic zero-knowledge-friendly signing
 primitives** and nothing else:
