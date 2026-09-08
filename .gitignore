@@ -1,0 +1,31 @@
+# Build output
+build/
+bin/
+debug/
+*.o
+*.d
+*.elf
+*.hex
+*.map
+*.asm
+*.apdu
+*.sha256
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+myenv/
+venv/
+.venv/
+
+# Ragger / Speculos test artifacts
+tests/**/snapshots-tmp/
+tests/**/.pytest_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

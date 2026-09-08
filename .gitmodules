@@ -1,0 +1,3 @@
+[submodule "src/zknox"]
+	path = src/zknox
+	url = https://github.com/ZKNoxHQ/ZKNOX-LibC.git
