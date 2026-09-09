@@ -1,0 +1,18 @@
+{
+    "name": "zknox-hw-privacy-js-tests",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "test": "node --test --test-concurrency=1 test/*.test.js",
+        "test:dkg": "node --test test/dkg.test.js",
+        "test:frost": "node --test test/frost-hw.test.js",
+        "test:sign": "node --test test/sign.test.js"
+    },
+    "dependencies": {
+        "@noble/hashes": "^2.0.1",
+        "circomlibjs": "^0.1.7"
+    },
+    "optionalDependencies": {
+        "@ledgerhq/hw-transport-node-hid": "^6.30.0"
+    }
+}

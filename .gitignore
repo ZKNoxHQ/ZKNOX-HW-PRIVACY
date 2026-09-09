@@ -24,6 +24,12 @@ venv/
 tests/**/snapshots-tmp/
 tests/**/.pytest_cache/
 
+# JS functional tests
+js/node_modules/
+# ...but the DKG restore-share fixture is a required test input, not build
+# output. The *.hex rule above (for app.hex) would otherwise swallow it.
+!js/test/fixtures/*.hex
+
 # Editor / OS
 .vscode/
 .idea/

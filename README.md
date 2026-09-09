@@ -14,6 +14,18 @@ pulled in as the `src/zknox` submodule. This repository is the firmware
 around it: key derivation, the APDU surface, the state machines, and the
 approval screens.
 
+> [!WARNING]
+> **This code has not been audited.** It is research and development
+> software, provided as is and without warranty of any kind. It has not
+> undergone external security review, and neither the firmware in this
+> repository nor the cryptography it pulls in from ZKNOX-LibC should be
+> assumed correct or safe.
+>
+> Do not use it to protect keys or funds you are not prepared to lose. The
+> blocking list at the top of [src/zkn_features.h](src/zkn_features.h)
+> records the limitations that are already understood; the absence of an
+> item from that list is not evidence that it is sound.
+
 ## Scope
 
 This app implements **primitives, not a protocol**. There is no notion here
