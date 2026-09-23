@@ -28,6 +28,24 @@ three tiers, gated by build flags (`src/zkn_features.h`, `Makefile`):
 
 Response: `RData` (may be empty) then the 2-byte status word `SW`.
 
+## Account addressing and derivation
+
+Every key instruction addresses an account by a **4-byte big-endian account
+index** — not a serialized BIP-32 path. The firmware pins the paths (all levels
+hardened); the account index is substituted at the third level. Matches the
+RAILGUN Ledger app so a shared host derives the same 0zk identity.
+
+| Key | Curve | Path | Used by |
+|-----|-------|------|---------|
+| Spending | BabyJubJub | `m/44'/1984'/account'/0'/0'` | `SIGNING_PUBKEY` (0x01), `BLIND_SIGN` (0x12) |
+| Viewing  | Ed25519 | `m/420'/1984'/account'/0'/0'` | `VIEWING_PUBKEY` (0x10), `VIEWING_PRIVKEY` (0x13), `RAILGUN_ADDRESS` (0x14) |
+| DKG comm | Ed25519 | `m/421'/1984'/account'/0'/0'` | `ZKN_FROST` ceremony (non-exported) |
+
+All three use SLIP-0010 extended derivation with the HMAC seed key
+`"babyjubjub seed"`. The path prefixes must be declared in the app's
+`PATH_APP_LOAD_PARAMS` (`Makefile`) — `"44'/1984'" "420'/1984'" "421'/1984'"` —
+or BOLOS refuses the corresponding `os_derive` with a signing error.
+
 ## Status words (`src/sw.h`)
 
 | SW | Name | Meaning |
