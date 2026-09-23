@@ -42,6 +42,31 @@ typedef enum
     //   Response: sig_len(1) || R8x||R8y||S (96) || msg(32)
     BLIND_SIGN = 0x12,
 
+    // ─── Viewing key / 0zk address ───────────────────────────────────
+    //
+    // Consistent with the RAILGUN Ledger app: same INS numbers and wire
+    // formats, so a host that speaks that app speaks this one unchanged.
+    //
+    // VIEWING_PUBKEY (0x10) — Ed25519 viewing pubkey for an account.
+    //   APDU data (4 B): account(4 BE)
+    //   P1 = 0x00 silent (DEBUG builds only) / 0x01 display-and-confirm
+    //   Response: 32 bytes, RFC 8032 compressed
+    VIEWING_PUBKEY = 0x10,
+
+    // VIEWING_PRIVKEY (0x13) — export the Ed25519 viewing private key
+    // (the raw SLIP-0010 derived seed used by scanning software; NOT a
+    // clamped scalar), gated by mandatory user approval.
+    //   APDU data (4 B): account(4 BE);  P1 = 0x00, P2 = 0x00
+    //   Response: 32 bytes on Approve
+    VIEWING_PRIVKEY = 0x13,
+
+    // RAILGUN_ADDRESS (0x14) — derive the canonical 0zk1… address for an
+    // account and confirm it on the trusted screen before returning it.
+    //   APDU data (4 B): account(4 BE)
+    //   P1 = 0x00 silent (DEBUG builds only) / 0x01 display-and-confirm
+    //   Response: 127 ASCII bytes (not NUL-terminated) on Approve
+    RAILGUN_ADDRESS = 0x14,
+
 #ifdef ZKNOX_DEBUG
 
     // BLIND_SIGN_NO_DISPLAY (0x02) — BLIND_SIGN without the approval UI.
@@ -107,8 +132,10 @@ typedef enum
  */
 typedef enum
 {
-    CONFIRM_SIGN,         /// confirm an EdDSA-Poseidon blind-sign request
-    CONFIRM_PUBKEY_EXPORT /// confirm export of the signing pubkey (INS 0x01)
+    CONFIRM_SIGN,          /// confirm an EdDSA-Poseidon blind-sign request
+    CONFIRM_PUBKEY_EXPORT, /// confirm export of a pubkey (INS 0x01 signing, 0x10 viewing)
+    CONFIRM_VIEWING_PRIVKEY, /// confirm export of the viewing private key (INS 0x13)
+    CONFIRM_RAILGUN_ADDRESS  /// confirm the 0zk1… address (INS 0x14)
 } request_type_e;
 
 /**
@@ -116,8 +143,10 @@ typedef enum
  */
 typedef struct
 {
-    uint8_t raw_public_key[64]; /// twisted-Edwards signing key, x||y
+    uint8_t raw_public_key[64]; /// signing key x||y (64) or viewing pubkey (32)
     size_t  raw_public_key_len; /// actual length of raw_public_key
+    uint8_t is_viewing;         /// 1 if raw_public_key is a viewing pubkey (title only)
+    char    zk_address[128];    /// 0zk1… string, ZKN_0ZK_STRING_LEN(127)+NUL, for INS 0x14
 } pubkey_ctx_t;
 
 /**

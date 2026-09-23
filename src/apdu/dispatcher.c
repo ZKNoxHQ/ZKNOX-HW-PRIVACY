@@ -32,6 +32,7 @@
 #include "handler_keys.h"
 #include "handler_sign.h"
 #include "handler_version.h"
+#include "handler_railgun_address.h"
 
 /* ZKN_FROST — threshold signing: the VSS/DKG ceremony and FROST signing on its
  * output. Split out of ZKNOX_DEBUG so the feature can ship without dragging in
@@ -80,6 +81,23 @@ int apdu_dispatcher(const command_t *cmd)
         if (cmd->p2 != 0) return io_send_sw(SW_WRONG_P1P2);
         INIT_BUF_OR_FAIL();
         return handler_blind_sign(cmd->p1, &buf);
+
+        // ─── Viewing key / 0zk address ─────────────────────────────────────
+
+    case VIEWING_PUBKEY:
+        /* P1 = display / silent gate; P2 is RFU. */
+        if (cmd->p2 != 0) return io_send_sw(SW_WRONG_P1P2);
+        INIT_BUF_OR_FAIL();
+        return handler_viewing_pubkey(&buf, cmd->p1);
+
+    case VIEWING_PRIVKEY:
+        if (cmd->p1 != 0 || cmd->p2 != 0) return io_send_sw(SW_WRONG_P1P2);
+        INIT_BUF_OR_FAIL();
+        return handler_viewing_privkey(&buf);
+
+    case RAILGUN_ADDRESS:
+        INIT_BUF_OR_FAIL();
+        return handler_railgun_address(&buf, cmd->p1, cmd->p2);
 
         // ─── App identification ──────────────────────────────────────────
 

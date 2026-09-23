@@ -47,3 +47,22 @@ int ui_display_blind_sign_eddsa_poseidon(void);
  * @return 0 if success, negative integer otherwise.
  */
 int ui_display_pubkey_export(void);
+
+/**
+ * Display the viewing-private-key export approval screen (INS 0x13). Reads
+ * the account index from bip32_path[0]. On Approve, validate_viewing_privkey
+ * derives and sends the 32-byte viewing seed; on Reject, SW_DENY.
+ *
+ * @return 0 if success, negative integer otherwise.
+ */
+int ui_display_viewing_privkey(void);
+
+/**
+ * Display the 0zk1… address confirmation screen (INS 0x14). Reads
+ * pk_info.zk_address (the 127-char string) and the account index. On
+ * Approve, validate_railgun_0zk_address returns the string; on Reject,
+ * SW_DENY.
+ *
+ * @return 0 if success, negative integer otherwise.
+ */
+int ui_display_railgun_0zk_address(void);

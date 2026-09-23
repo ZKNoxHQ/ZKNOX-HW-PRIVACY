@@ -190,7 +190,8 @@ CURVE_APP_LOAD_PARAMS = ed25519
 # derives the same key from the same seed for a given account index. The
 # host supplies only the account index — the path itself is firmware-fixed
 # and fully hardened.
-PATH_APP_LOAD_PARAMS = "44'/1984'" "421'/1984'"
+# 44' spending, 420' viewing (exported for scanning + 0zk address), 421' DKG comm.
+PATH_APP_LOAD_PARAMS = "44'/1984'" "420'/1984'" "421'/1984'"
 
 VARIANT_PARAM = COIN
 VARIANT_VALUES = BOL

@@ -80,6 +80,38 @@ approval (shows account index + message).
 - **Response** (on approve, 129 bytes): `sigLen(1) = 96 || R8x(32) || R8y(32) ||
   S(32) || msg(32)`. The trailing 32 bytes echo the signed message.
 
+### `0x10` VIEWING_PUBKEY
+
+Ed25519 viewing public key for an account — part of the user's 0zk address.
+INS/format identical to the RAILGUN Ledger app.
+
+- **P1**: `0x01` display-and-confirm (required in production; `0x00` silent is
+  `ZKNOX_DEBUG`-only and rejected otherwise). **P2**: `0x00`.
+- **CData** (4): `account(4 BE)`.
+- **Response** (on approve): 32 bytes, RFC 8032 compressed.
+
+### `0x13` VIEWING_PRIVKEY
+
+Export the Ed25519 viewing private key, gated by mandatory user approval. The
+secret is derived only after Approve and never staged.
+
+- **P1**: `0x00`. **P2**: `0x00`.
+- **CData** (4): `account(4 BE)`.
+- **Response** (on approve): 32 bytes — the raw SLIP-0010 derived viewing seed
+  (the value scanning software needs). **Not** a clamped scalar.
+
+### `0x14` RAILGUN_ADDRESS
+
+Derive the canonical `0zk1…` address for an account and show it on the trusted
+screen before returning it. Master key is `Poseidon3(spendX, spendY,
+Poseidon1(viewingSeed))`; the encoded network id is the all-chains wildcard.
+
+- **P1**: `0x01` display-and-confirm (required in production; `0x00` silent is
+  `ZKNOX_DEBUG`-only and rejected otherwise). **P2**: `0x00`.
+- **CData** (4): `account(4 BE)`.
+- **Response** (on approve): 127 ASCII bytes, the `0zk1…` string (not
+  NUL-terminated).
+
 ## Threshold instructions (`ZKN_FROST`)
 
 Two-round Pedersen VSS/DKG (every participant is a dealer, no trusted dealer),

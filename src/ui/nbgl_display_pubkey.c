@@ -99,7 +99,9 @@ int ui_display_pubkey_export(void)
     nbgl_useCaseAddressReview(g_pk_hex,
                               &pairList,
                               &ICON_APP_MAIN,
-                              "Export\nsigning pubkey",
+                              G_context.pk_info.is_viewing
+                                  ? "Export\nviewing pubkey"
+                                  : "Export\nsigning pubkey",
                               NULL,
                               review_choice);
     return 0;

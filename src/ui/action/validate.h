@@ -25,3 +25,22 @@ void validate_eddsa_poseidon_sign(bool choice);
  * @param[in] choice  user choice (approved or rejected).
  */
 void validate_pubkey_export(bool choice);
+
+/**
+ * Action for viewing-private-key export approval (INS 0x13). On Approve,
+ * derives the raw Ed25519 viewing seed for the staged account and sends the
+ * 32 bytes; on Reject, SW_DENY. The secret is derived only here and wiped
+ * before returning; G_context is wiped on both paths.
+ *
+ * @param[in] choice  user choice (approved or rejected).
+ */
+void validate_viewing_privkey(bool choice);
+
+/**
+ * Action for 0zk1… address confirmation (INS 0x14). On Approve, sends the
+ * 127-byte address string staged in G_context; on Reject, SW_DENY. Wipes
+ * G_context on both paths.
+ *
+ * @param[in] choice  user choice (approved or rejected).
+ */
+void validate_railgun_0zk_address(bool choice);
