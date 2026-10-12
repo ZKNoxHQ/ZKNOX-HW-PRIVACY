@@ -11,6 +11,17 @@ debug/
 *.apdu
 *.sha256
 
+# ...except the staged per-device release binaries (sw/prod/frost-0), which
+# other repos consume directly: build/<device>/bin/app.{elf,apdu}.
+!/build/
+/build/*
+!/build/*/
+/build/*/*
+!/build/*/bin/
+/build/*/bin/*
+!/build/*/bin/app.elf
+!/build/*/bin/app.apdu
+
 # Python
 __pycache__/
 *.py[cod]
