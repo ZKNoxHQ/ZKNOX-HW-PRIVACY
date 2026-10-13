@@ -1,0 +1,7 @@
+target=flex
+backend=sw
+mode=prod
+frost=0
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=48bca80b68fb056e91cc45f616b36d09ed7fc0bfe12b976831e5bd94a9f46946

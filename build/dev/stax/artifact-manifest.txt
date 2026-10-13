@@ -1,0 +1,7 @@
+target=stax
+backend=sw
+mode=debug
+frost=1
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=6287bf8774381a56937f13bb3013c7ebf71ef4c4a744be00cb2a7c37ca1067a5

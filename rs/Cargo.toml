@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/frost-babyjubjub", "crates/hw-tests", "crates/zknox-sim"]
+resolver = "2"
+
+# The BabyJubJub arithmetic is bigint-based, so an unoptimized build turns the
+# ceremony tests of frost-babyjubjub into a coffee break. Optimizing test
+# builds keeps `cargo test` usable without asking for --release.
+[profile.test]
+opt-level = 2
+
+# Dependencies carry the bigint arithmetic, so optimize them fully while the
+# local crates stay cheap to rebuild. Package overrides are per profile, so
+# `test` needs its own copy of the line.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3

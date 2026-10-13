@@ -171,6 +171,52 @@ share lives in RAM with no `nvm_write`, `FROST_HW_SIGN` releases `z_i` with
 no user confirmation, `DKG_FINALIZE` shows nothing — is in
 [src/zkn_features.h](src/zkn_features.h).
 
+### Every device at once
+
+```shell
+./docker.sh
+./build-all.sh                               # every device, both modes
+./build-all.sh --prod                        # production only
+DEVICES="nanos2 flex" ./build-all.sh         # restrict to those targets
+BACKEND=cx ./build-all.sh                    # the syscall backend instead
+```
+
+`build-all.sh` discovers the SDKs the container carries, asks the Makefile
+for each one's target rather than guessing it from the variable's name, and
+builds every device `ledger_app.toml` declares twice:
+
+```text
+build/prod/<target>/app.elf  app.apdu  artifact-manifest.txt   MODE=prod,  FROST=0
+build/dev/<target>/app.elf   app.apdu  artifact-manifest.txt   MODE=debug, FROST=1
+build/toolchain.txt
+```
+
+Both trees are committed, each binary beside a manifest naming the commit,
+the submodule commit, the backend, the mode, the FROST gate and the ELF's
+sha256. The development binaries carry the key-extraction instructions, so
+what they are is written down rather than left to be discovered; the point of
+publishing them is that anyone testing against this app runs the binary the
+suites were run on.
+
+`build/toolchain.txt` records what those binaries were built with — app
+version, both commits, and each SDK's path, API level and git describe —
+together with the OS of whatever device is attached. That pair is worth
+having written down: `make load` refuses a device whose OS was built against
+another API level than the SDK, with nothing but `SW 511f` to say so.
+
+The script also holds an invariant the Makefile alone does not.
+`build/<target>/bin/` is restaged after every successful build, whatever its
+mode, so building `MODE=debug` to flash a test device replaced the staged
+release binary with one exposing `BLIND_SIGN_NO_DISPLAY`,
+`SIGN_WITH_PRIVKEY` and the DKG key-extraction instructions — and a
+`git add -A` afterwards committed it. `build-all.sh` builds the development
+tree first and stages production last and explicitly, so that copy is the
+production binary whatever order the devices come in:
+
+```shell
+grep -h . build/*/bin/configuration.txt      # every line: mode=prod, frost=0
+```
+
 ## Tests
 
 Standard ragger/Speculos functional tests:
@@ -188,11 +234,40 @@ skip what is genuinely absent. `MODE=debug FROST=1` runs 115 of them;
 `MODE=prod` runs 61 and skips the rest, having first asserted that the
 debug surface really is gone.
 
-What the suite does **not** do is run a full t-of-n ceremony — that needs
-n devices. It covers the DKG state machine, the wire shapes, and every
-transition the device must refuse; cross-implementation agreement on the
-digest and the partial-signature arithmetic belongs to the libC's own host
-tests (`src/zknox/tests/`).
+Three APDU-level suites sit alongside it, checking cryptographic output
+against host-side reference implementations rather than the dispatcher
+surface. The first two assert the same things over the same APDUs, against
+different targets: [`js/`](js/README.md) (node:test, circomlib oracle), where
+`./run-js-tests.sh` builds `MODE=debug FROST=1` and boots Speculos in the dev
+container, and [`rs/`](rs/README.md) (cargo test, `frost-babyjubjub` oracle),
+where `./run-rs-tests.sh` builds [`sim/`](sim/README.md) and pipes the APDUs
+to it — no container, no emulator, seconds to run — while
+`./run-rs-device-tests.sh` runs that same suite against a physical Ledger,
+with the other DKG participants simulated.
+
+The third asserts something else. `./run-sim-tests.sh` links `sim/` into the
+test binary rather than spawning it, so an APDU costs a function call instead
+of a round trip through a pipe, about three hundred times less. That buys the
+checks the other two cannot afford: the whole `(INS, P1, P2)` space swept
+against the RFU contract `src/apdu/dispatcher.c` states instruction by
+instruction, 16.7 million exchanges in two seconds; key derivation under 32
+random seeds in one run; the approval and the refusal path of `BLIND_SIGN` in
+one session; a hundred thousand random APDUs. `--san` runs all of it under
+AddressSanitizer and UBSan. What it gives up is the process boundary, and with
+it the ceremony: the firmware's DKG state is a file static, so one process is
+one device.
+
+A full t-of-n ceremony needs n participants, which is why the JavaScript
+suite stops at the DKG state machine, the wire shapes and every transition
+the device must refuse: one Speculos instance is one device. A simulator is
+a process, so `rs/crates/hw-tests/tests/ceremony.rs` runs the whole thing —
+DKG, FROST signature, verification — twice: once with every participant on
+the canonical yellow×12 seed, which is the shape `./run-rs-device-tests.sh`
+reproduces with a Ledger standing in for one of them, and once in pure
+software with n, t, the quorum, the message and a 64-byte seed per
+participant drawn at random. Both check each announced transport key against
+the one its seed derives, every partial signature against the Feldman
+commitments, and the aggregate under the circomlib equation.
 
 ## Layout
 
@@ -213,6 +288,20 @@ src/
 tests/
 ├── application_client/   APDU client and response unpackers
 └── standalone/           pytest suite
+js/                       APDU-level functional suite (node:test)
+rs/
+├── crates/frost-babyjubjub/  Rust port of @railgun-reloaded/curves
+├── crates/hw-tests/          the js/ suite in Rust (cargo test)
+└── crates/zknox-sim/         sim/ linked in: the dispatcher's contract, swept
+sim/                      host simulator: the real dispatcher, no emulator
+build/
+├── prod/<target>/        MODE=prod binaries, with their manifests
+├── dev/<target>/         MODE=debug binaries, with their manifests
+├── toolchain.txt         SDK API levels and the attached device's OS
+└── <target>/bin/         the staged release copy, always production
+build-all.sh              every device, both modes
+docker.sh                 the Ledger dev container
+run-js-tests.sh  run-rs-tests.sh  run-rs-device-tests.sh  run-sim-tests.sh
 ```
 
 ## Licence

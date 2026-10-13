@@ -1,6 +1,6 @@
 # ══════════════════════════════════════════════════════════════════════
 #  sim/Makefile — host-side APDU simulator for the ZKNOX app
-#  SIM_VERSION 0.4.3
+#  SIM_VERSION 0.5.0
 #
 #  Compiles the REAL dispatcher + production handlers against a minimal
 #  Ledger-SDK shim and vendored crypto (trezor-crypto, orlp-ed25519).
@@ -8,7 +8,7 @@
 #
 #    make          → build/prod/apdu_sim   (stdin/stdout hex, ligne à ligne)
 #    make test     → self-test KAT
-#    make test-sim-js → suite JS existante contre le simulateur
+#    make test-sim-rs → suite Rust rs/ contre le simulateur
 # ══════════════════════════════════════════════════════════════════════
 APP   ?= ../
 ZKNOX ?= $(APP)/src/zknox
@@ -24,6 +24,15 @@ endif
 # scripts and documentation.
 BUILD        := build/.config/$(MODE)/frost-$(FROST)
 OUTPUT       := build/$(MODE)
+# SAN=1 builds the simulator's own sources under AddressSanitizer and
+# UndefinedBehaviorSanitizer. The objects go to their own directory, so a
+# sanitized and a plain build can live side by side; libzknox is built by its
+# own Makefile and is not instrumented, which still leaves ASan watching every
+# heap access the app sources and the shim make.
+ifeq ($(SAN),1)
+    BUILD    := $(BUILD)-san
+    OUTPUT   := $(OUTPUT)-san
+endif
 ZKNOX_LIB    := $(BUILD)/libzknox.a
 .DEFAULT_GOAL := all
 
@@ -48,49 +57,52 @@ endif
 ifeq ($(FROST),1)
     CFLAGS += -DZKN_FROST
 endif
-CFLAGS  += -DAES_VAR -DZKN_BN_BACKEND_SW -DUSE_ETHEREUM=0 -DUSE_KECCAK=1 -DAPPVERSION_M=0 -DAPPVERSION_N=0 -DAPPVERSION_P=2 -DAPPNAME=\"RAILGUN\"
-# 7702 fixed path prefix — MUST mirror the app Makefile DEFINES
-CFLAGS  += -DPATH_7702_L0_H=0x8000002Cu -DPATH_7702_L1_H=0x8000003Cu
-CFLAGS  += -DPATH_7702_L2_H=0x800007C0u -DPATH_7702_L3_H=0x80001E16u
+# Mirrors the app Makefile: APPNAME and the version the GET_* handlers return.
+CFLAGS  += -DAES_VAR -DZKN_BN_BACKEND_SW -DUSE_ETHEREUM=0 -DUSE_KECCAK=1 -DAPPVERSION_M=0 -DAPPVERSION_N=1 -DAPPVERSION_P=0 -DAPPNAME=\"ZKNOX\"
 
-CFLAGS += -DSIM_VERSION=\"0.4.3\"
+CFLAGS += -DSIM_VERSION=\"0.5.0\"
 CFLAGS += -include shim/include/sim_compat.h
+ifeq ($(SAN),1)
+    # shift-base is excluded: vendor/ed25519 shifts negative ints on purpose
+    # (fe.c:714 and friends), which is UB by the letter of C and benign on
+    # two's-complement. Everything else is fatal, so a finding in the app
+    # sources, the shim or libzknox fails the run instead of scrolling past.
+    SAN_FLAGS := -fsanitize=address,undefined -fno-sanitize=shift-base \
+                 -fno-omit-frame-pointer -fno-sanitize-recover=undefined
+    CFLAGS    += $(SAN_FLAGS)
+    LDFLAGS   += $(SAN_FLAGS)
+endif
+# Anything a caller wants on top, without clobbering the flags above.
+CFLAGS  += $(EXTRA_CFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS)
 
-INC := -Ishim/include -Ivendor/trezor -Ivendor/ed25519 -Ivendor/aes \
+INC := -Isrc -Ishim/include -Ivendor/trezor -Ivendor/ed25519 -Ivendor/aes \
        -I$(APP)/src -I$(APP)/src/handler -I$(APP)/src/apdu \
-       -I$(APP)/src/ui -I$(APP)/src/ui/action -I$(APP)/src/helper -I$(APP)/src/transaction -I$(APP)/src/note \
+       -I$(APP)/src/ui -I$(APP)/src/ui/action -I$(APP)/src/helper \
        -I$(ZKNOX)/src/common -I$(ZKNOX)/src/bn -I$(ZKNOX)/src/compat \
        -I$(ZKNOX)/src/zkn_mont -I$(ZKNOX)/src/bls12381 -I$(ZKNOX)/src/ecc \
        -I$(ZKNOX)/src/hash -I$(ZKNOX)/src/mpt -I$(ZKNOX)/src/keys \
        -I$(ZKNOX)/src/threshold -I$(ZKNOX)/src/aes
 
+# This app's production surface. The RAILGUN-only sources the simulator used
+# to compile (7702 auth, tx hash, delegates, note encryption) have no
+# counterpart here, so they are gone rather than stubbed.
 APP_SRCS := \
     $(APP)/src/apdu/dispatcher.c \
     $(APP)/src/handler/handler_version.c \
     $(APP)/src/handler/handler_keys.c \
     $(APP)/src/handler/handler_sign.c \
     $(APP)/src/handler/handler_railgun_address.c \
-    $(APP)/src/handler/sign_7702_auth.c \
-    $(APP)/src/handler/sign_tx_hash.c \
-    $(APP)/src/handler/known_7702_delegates.c \
     $(APP)/src/ui/action/validate.c \
     $(APP)/src/helper/send_response.c \
     $(ZKNOX)/src/keys/zkn_keyderivation.c
 
-ifeq ($(MODE),debug)
+# The DKG and FROST handlers are gated on FROST, not on MODE, exactly as in
+# the app Makefile — that is what makes MODE=prod FROST=1 testable here.
+ifeq ($(FROST),1)
 APP_SRCS += \
-    $(APP)/src/handler/handler_poseidon.c \
-    $(APP)/src/handler/handler_keccak256.c \
-    $(APP)/src/handler/handler_blake512.c \
-    $(APP)/src/handler/handler_scalar_mul.c \
-    $(APP)/src/handler/handler_encrypt_note.c \
-    $(APP)/src/handler/handler_frost.c \
     $(APP)/src/handler/handler_dkg.c \
     $(APP)/src/handler/handler_frost_sign.c \
-    $(APP)/src/handler/handler_gcm_test.c \
-    $(APP)/src/handler/frost.c \
-    $(APP)/src/handler/get_vss.c \
-    $(APP)/src/note/zkn_note_encrypt.c \
     $(ZKNOX)/src/ecc/zkn_frost.c \
     $(ZKNOX)/src/ecc/zkn_tEdwards.c \
     $(ZKNOX)/src/keys/zkn_ed25519_scalar.c \
@@ -99,7 +111,7 @@ APP_SRCS += \
 endif
 
 SIM_SRCS := \
-    src/main.c \
+    src/sim_core.c \
     shim/shim_crypto.c \
     shim/shim_io.c \
     shim/sim_ui.c \
@@ -116,8 +128,14 @@ VENDOR_SRCS := \
     vendor/aes/aescrypt.c vendor/aes/aeskey.c vendor/aes/aestab.c \
     vendor/aes/aes_modes.c vendor/aes/gf128mul.c vendor/aes/aesgcm.c
 
+# main.c is the line-protocol front-end and the only object the library does
+# not want: `lib` archives everything else so a caller can link the simulator
+# and provide its own front-end (rs/crates/zknox-sim).
+MAIN_SRC := src/main.c
+
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(APP_SRCS) $(SIM_SRCS) $(VENDOR_SRCS)))
-VPATH := $(sort $(dir $(APP_SRCS) $(SIM_SRCS) $(VENDOR_SRCS)))
+MAIN_OBJ := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(MAIN_SRC)))
+VPATH := $(sort $(dir $(APP_SRCS) $(SIM_SRCS) $(VENDOR_SRCS) $(MAIN_SRC)))
 
 .PHONY: all
 all: $(OUTPUT)/apdu_sim
@@ -128,9 +146,31 @@ $(OUTPUT)/apdu_sim: $(BUILD)/apdu_sim
 	@cp $< $@
 	@echo "  CP   $< -> $@"
 
-$(BUILD)/apdu_sim: $(OBJS) $(ZKNOX_LIB)
+$(BUILD)/apdu_sim: $(MAIN_OBJ) $(OBJS) $(ZKNOX_LIB)
 	@echo "  LD   $@"
-	@$(CC) $(OBJS) $(ZKNOX_LIB) -o $@
+	@$(CC) $(MAIN_OBJ) $(OBJS) $(ZKNOX_LIB) $(LDFLAGS) -o $@
+
+# One archive holding the simulator, the app sources and libzknox, for a
+# caller that links instead of spawning. Merged rather than handed over as
+# two archives because the dependency runs both ways — libzknox calls the
+# shim's cx_* functions and the shim calls libzknox — and a linker resolves
+# that within one archive but not across two in a single pass.
+AR ?= ar
+SIM_LIB := $(BUILD)/libzknoxsim.a
+
+.PHONY: lib
+lib: $(SIM_LIB)
+	@echo "$(SIM_LIB)"
+
+$(SIM_LIB): $(OBJS) $(ZKNOX_LIB)
+	@echo "  AR   $@"
+	@rm -f $@
+	@printf 'create %s\n' $@ > $(BUILD)/libzknoxsim.mri
+	@printf 'addmod %s\n' $(OBJS) >> $(BUILD)/libzknoxsim.mri
+	@printf 'addlib %s\n' $(ZKNOX_LIB) >> $(BUILD)/libzknoxsim.mri
+	@printf 'save\nend\n' >> $(BUILD)/libzknoxsim.mri
+	@$(AR) -M < $(BUILD)/libzknoxsim.mri
+	@$(AR) s $@
 
 $(BUILD)/%.o: %.c Makefile
 	@mkdir -p $(BUILD)
@@ -151,26 +191,16 @@ $(ZKNOX_LIB): Makefile $(ZKNOX_INPUTS)
 	$(MAKE) -C $(ZKNOX) ZKNOX_DEBUG=$(if $(filter debug,$(MODE)),1,0) ZKN_FROST=$(FROST)
 	@cp $(ZKNOX)/build/libzknox.a $@
 
-.PHONY: test test-sim-js clean
+.PHONY: test test-sim-rs clean
 test: $(OUTPUT)/apdu_sim
-	./test/selftest.sh
+	SIM=$(OUTPUT)/apdu_sim ./test/selftest.sh
 
-# Exécute la suite JS existante contre le simulateur. Chaque test spawn
-# lui-même le binaire (SIM_BIN) et lui pipe les APDUs en hex: pas de
-# serveur, pas de port, pas de dépendance transport.
-JS ?= $(APP)/js
-test-sim-js:
+# Exécute la suite Rust (rs/crates/hw-tests) contre le simulateur. Chaque
+# binaire de test spawn lui-même le simulateur : pas de serveur, pas de port,
+# pas de conteneur. Le câblage SIM_BIN côté JS n'existe pas dans ce dépôt.
+test-sim-rs:
 	$(MAKE) MODE=debug
-	@set -e; \
-	SIM_BIN=$(CURDIR)/build/debug/apdu_sim; export SIM_BIN; \
-	unset LIBC; \
-	cd $(JS) && \
-	for f in keys 0zk-address 0zk-derivations annotation-data \
-	         encrypt-note sign scalar-mul poseidon; do \
-	    echo "== test/$$f.test.js"; \
-	    node --test test/$$f.test.js || exit 1; \
-	done && \
-	node test/test_7702_address.cjs --sign --auth --random 3
+	cd $(APP)/rs && cargo test -p zknox-hw-tests -- --test-threads=1
 
 clean:
 	rm -rf $(BUILD)

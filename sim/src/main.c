@@ -1,71 +1,27 @@
-/* sim/src/main.c — ZKNOX APDU simulator.
+/* sim/src/main.c — ZKNOX APDU simulator, line protocol front-end.
  *
- * Drives the REAL dispatcher + handlers, compiled for the host with the
- * SDK shim, against the software crypto backend.
+ * The simulator itself is `sim_core.c`: it drives the REAL dispatcher +
+ * handlers, compiled for the host with the SDK shim, against the software
+ * crypto backend. This file is only the transport.
  *
  * Interface: line-based hex on stdin/stdout. One APDU per line in,
  * one response (data || SW) per line out. No network, no framing, no
- * sessions — the JS side spawns this binary and pipes lines.
+ * sessions — the caller spawns this binary and pipes lines. Several
+ * participants means several processes, the firmware's ceremony state being
+ * a file static.
  *
  * Env: SIM_SEED (128 hex chars), SIM_REJECT=1, SIM_VERBOSE=1,
  *      SIM_RNG_SEED (deterministic RNG for reproducibility).
+ *
+ * `rs/crates/zknox-sim` links sim_core.o instead and calls it directly,
+ * with setters in place of these variables.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
-#include "types.h"
-#include "dispatcher.h"
-#include "sw.h"
-
-extern uint8_t  sim_resp[];
-extern size_t   sim_resp_len;
-extern uint16_t sim_sw;
-extern int      sim_replied;
-
-static int process_apdu(const uint8_t *apdu, size_t len,
-                        uint8_t *out, size_t *out_len) {
-    command_t cmd;
-    memset(&cmd, 0, sizeof(cmd));
-
-    if (len < 4) {
-        out[0] = 0x67; out[1] = 0x00; /* wrong length */
-        *out_len = 2;
-        return 0;
-    }
-    cmd.cla = apdu[0];
-    cmd.ins = apdu[1];
-    cmd.p1  = apdu[2];
-    cmd.p2  = apdu[3];
-    cmd.lc  = 0;
-    cmd.data = NULL;
-    if (len >= 5) {
-        cmd.lc = apdu[4];
-        if ((size_t)cmd.lc + 5 > len) {
-            out[0] = 0x67; out[1] = 0x00;
-            *out_len = 2;
-            return 0;
-        }
-        if (cmd.lc > 0) cmd.data = (uint8_t *)(apdu + 5);
-    }
-
-    sim_replied = 0;
-    sim_resp_len = 0;
-    sim_sw = 0;
-
-    apdu_dispatcher(&cmd);
-
-    if (!sim_replied) { /* handler forgot to reply — should not happen */
-        sim_sw = 0x6F00;
-        sim_resp_len = 0;
-    }
-    memcpy(out, sim_resp, sim_resp_len);
-    out[sim_resp_len]     = (uint8_t)(sim_sw >> 8);
-    out[sim_resp_len + 1] = (uint8_t)(sim_sw & 0xFF);
-    *out_len = sim_resp_len + 2;
-    return 0;
-}
+#include "sim_core.h"
 
 static int hexval(int c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -78,16 +34,12 @@ int main(int argc, char **argv) {
     char line[16384];
 
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-        printf("apdu_sim %s (%s)\n", SIM_VERSION,
-#ifdef ZKNOX_MODE_DEBUG
-               "debug"
-#else
-               "prod"
-#endif
-        );
+        printf("apdu_sim %s (%s%s)\n", zkn_sim_version(),
+               zkn_sim_has_debug_ins() ? "debug" : "prod",
+               zkn_sim_has_frost() ? ", frost" : "");
         return 0;
     }
-    uint8_t apdu[8192], out[8192];
+    uint8_t apdu[8192], out[ZKN_SIM_RESP_MAX];
 
     setvbuf(stdout, NULL, _IOLBF, 0); /* line-buffered even when piped */
 
@@ -102,7 +54,7 @@ int main(int argc, char **argv) {
         }
         if (n == 0) continue;
         size_t out_len = 0;
-        process_apdu(apdu, n, out, &out_len);
+        zkn_sim_exchange(apdu, n, out, &out_len);
         for (size_t i = 0; i < out_len; i++) printf("%02x", out[i]);
         printf("\n");
     }

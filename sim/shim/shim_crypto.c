@@ -31,6 +31,8 @@
 #include "memzero.h"
 #include "blake2b.h"
 
+#include "sim_core.h"
+
 /* orlp/ed25519 internals for affine pubkey coordinates */
 #include "fixedint.h"
 #include "fe.h"
@@ -77,6 +79,19 @@ static const uint8_t *sim_seed(void) {
         g_seed_ready = 1;
     }
     return g_seed;
+}
+
+/* sim_core.h control surface. SIM_SEED can only be read once, at the first
+ * derivation; a caller that links the simulator instead of spawning it sets
+ * the seed here and can change it between exchanges. */
+void zkn_sim_set_seed(const uint8_t seed[64]) {
+    memcpy(g_seed, seed, 64);
+    g_seed_ready = 1;
+}
+
+void zkn_sim_set_seed_default(void) {
+    memcpy(g_seed, DEFAULT_SEED, 64);
+    g_seed_ready = 1;
 }
 
 /* ───────────────────── BIP32 secp256k1 ───────────────────── */
@@ -421,17 +436,41 @@ cx_err_t cx_blake2b_512_hash(const uint8_t *in, size_t len, uint8_t out[64]) {
 
 /* ───────────────────── RNG ───────────────────── */
 
+/* RNG state. `g_rng_mode` is -1 until decided: 0 = /dev/urandom,
+ * 1 = deterministic from g_rng_st. SIM_RNG_SEED decides it on first use; the
+ * sim_core.h setters decide it ahead of time and can switch back. */
+static uint64_t g_rng_st = 0;
+static int      g_rng_mode = -1;
+
+/* xorshift64 needs a non-zero state. `seed | 1` would do that but is not
+ * injective — it maps 2k and 2k+1 to the same stream — so zero is the only
+ * value remapped. */
+void zkn_sim_set_rng_seed(uint64_t seed) {
+    g_rng_st = seed ? seed : 1u;
+    g_rng_mode = 1;
+}
+
+void zkn_sim_set_rng_os(void) {
+    g_rng_mode = 0;
+}
+
 cx_err_t cx_get_random_bytes(void *buffer, size_t len) {
     /* Deterministic when SIM_RNG_SEED is set (reproducible tests). */
-    static uint64_t st = 0;
-    static int inited = 0;
-    const char *env = getenv("SIM_RNG_SEED");
-    if (env) {
-        if (!inited) { st = strtoull(env, NULL, 0) | 1u; inited = 1; }
+    if (g_rng_mode < 0) {
+        const char *env = getenv("SIM_RNG_SEED");
+        if (env) {
+            uint64_t s = strtoull(env, NULL, 0);
+            g_rng_st = s ? s : 1u;
+            g_rng_mode = 1;
+        } else {
+            g_rng_mode = 0;
+        }
+    }
+    if (g_rng_mode == 1) {
         uint8_t *p = buffer;
         for (size_t i = 0; i < len; i++) {
-            st ^= st << 13; st ^= st >> 7; st ^= st << 17;
-            p[i] = (uint8_t)st;
+            g_rng_st ^= g_rng_st << 13; g_rng_st ^= g_rng_st >> 7; g_rng_st ^= g_rng_st << 17;
+            p[i] = (uint8_t)g_rng_st;
         }
         return CX_OK;
     }
