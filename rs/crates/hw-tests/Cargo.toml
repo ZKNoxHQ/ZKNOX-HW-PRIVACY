@@ -1,0 +1,23 @@
+[package]
+name = "zknox-hw-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rust port of the js/ functional suite: APDU-level tests for ZKNOX-HW-PRIVACY"
+
+[dependencies]
+frost-babyjubjub = { path = "../frost-babyjubjub" }
+num-bigint = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+hidapi = { version = "2", default-features = false, features = ["linux-static-hidraw"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[features]
+default = []
+# USB HID backend, the equivalent of the optional @ledgerhq/hw-transport-node-hid
+# dependency on the JavaScript side. Speculos needs no feature.
+hid = ["dep:hidapi"]

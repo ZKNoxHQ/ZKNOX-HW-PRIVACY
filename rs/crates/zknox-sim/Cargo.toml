@@ -1,0 +1,17 @@
+[package]
+name = "zknox-sim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The sim/ host simulator linked into Rust: the firmware's APDU dispatcher as a function call"
+links = "zknoxsim"
+build = "build.rs"
+
+[dependencies]
+
+[dev-dependencies]
+# The third test set speaks the same APDU vocabulary as the second one and
+# reuses its host-side oracles; only the transport differs.
+zknox-hw-tests = { path = "../hw-tests" }
+frost-babyjubjub = { path = "../frost-babyjubjub" }
+num-bigint = "0.4"

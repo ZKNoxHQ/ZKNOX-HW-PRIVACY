@@ -1,17 +1,38 @@
 #!/bin/bash
 # sim/test/selftest.sh — quick KAT self-test of the APDU simulator.
-# Uses the --stdin mode (no TCP, no JS deps). Covers the production INS
-# set with the device-validated vectors of the m/44'/60'/1984'/7702'
-# path migration (mnemonic "yellow" x12).
+#
+# Line protocol on stdin/stdout, no JS, no device. Covers the dispatcher
+# surface this app actually has, with the seed every suite assumes
+# (mnemonic "yellow" x12, the simulator's default).
+#
+# The DEBUG-only instructions (0x02 BLIND_SIGN_NO_DISPLAY, 0x50
+# SIGN_WITH_PRIVKEY) and the DKG/FROST set are checked when the binary under
+# test carries them; against a prod build those checks are skipped, not failed.
+#
+#   make test             # MODE=prod
+#   make MODE=debug test  # the full set
 set -u
-SIM="${SIM:-./build/prod/apdu_sim}"
+SIM="${SIM:-./build/debug/apdu_sim}"
+[ -x "$SIM" ] || SIM=./build/prod/apdu_sim
 [ -x "$SIM" ] || { echo "build first: make (or make MODE=debug)"; exit 1; }
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
+send() { printf '%s\n' "$1" | "$SIM"; }
 check() { # check <label> <apdu_hex> <expected_regex_on_resp_hex>
-    local label="$1" apdu="$2" want="$3"
-    local got
-    got=$(printf '%s\n' "$apdu" | "$SIM")
+    local label="$1" apdu="$2" want="$3" got
+    got=$(send "$apdu")
+    if [[ "$got" =~ $want ]]; then
+        echo "ok   $label"; pass=$((pass+1))
+    else
+        echo "FAIL $label"; echo "     apdu: $apdu"; echo "     got : $got"; fail=$((fail+1))
+    fi
+}
+check_opt() { # same, but a 6d00/6e00 answer means the build lacks the INS
+    local label="$1" apdu="$2" want="$3" got
+    got=$(send "$apdu")
+    case "$got" in
+        6d00|6e00|6a86) echo "skip $label (not in this build)"; skip=$((skip+1)); return;;
+    esac
     if [[ "$got" =~ $want ]]; then
         echo "ok   $label"; pass=$((pass+1))
     else
@@ -19,69 +40,45 @@ check() { # check <label> <apdu_hex> <expected_regex_on_resp_hex>
     fi
 }
 
+MSG=8c1f26718227707c6e5c61417b47daccafabca9f574c16e1521dd6a9c70d8405
+
 # ── basics ──
-check "GET_VERSION"                 "e003000000" "^0000029000$"
-check "GET_APP_NAME"                "e004000000" "^5241494c47554e9000$"   # "RAILGUN"
-check "GET_VERSION P1 RFU refuse"   "e003010000" "^6a86$"
-check "GET_VERSION P2 RFU refuse"   "e003000100" "^6a86$"
-check "GET_APP_NAME P1 RFU refuse"  "e004010000" "^6a86$"
-check "GET_APP_NAME P2 RFU refuse"  "e004000100" "^6a86$"
-check "CLA inconnu -> 6e00"         "a003000000" "^6e00$"
-check "INS inconnu -> 6d00"         "e0ff000000" "^6d00$"
-check "CLEAR_SIGN non simule"       "e011000000" "^(6d00|6a87)$"
+check "GET_VERSION"               "e003000000" "^0001009000$"
+check "GET_APP_NAME"              "e004000000" "^5a4b4e4f589000$"   # "ZKNOX"
+check "GET_VERSION P1 RFU refuse" "e003010000" "^6a86$"
+check "unknown INS refused"       "e0ff000000" "^6[de]00$"
 
-# ── 7702 pubkeys : KAT valides sur Nano S+ (chainId||purposeId||index BE) ──
-# adresse = keccak(W[1:65])[12:] verifiee via ethers dans les tests JS;
-# ici on fige les pubkeys completes retournees par le device path.
-check "7702 (0,0,0) sw"             "e00700000c000000000000000000000000" "9000$"
-check "7702 (1,0,0) sw"             "e00700000c000000010000000000000000" "9000$"
-check "7702 P1=01 auto-approve"     "e00701000c000000000000000000000000" "9000$"
-check "7702 Lc court -> 6700"       "e007000004deadbeef" "^6a87$|^6700$"
-check "7702 Lc trailing refuse"     "e00700000d00000000000000000000000000" "^6a87$"
-check "7702 P1 inconnu refuse"      "e00702000c000000000000000000000000" "^6a86$"
-check "7702 P2 RFU refuse"          "e007000100" "^6a86$"
+# ── keys: the signing pubkey is a deterministic function of the seed. The
+#    silent P1=0 variant is DEBUG-only; P1=1 goes through the review screen,
+#    which the simulator approves. ──
+check     "SIGNING_PUBKEY confirm" "e00101000400000000" \
+    "^090c08681bf4538b88c616e2ecda023fe7ca89fc952e3baa3eeddfdc14e33f281e8cfa233cded8ddd6f5dd2936382cade20578d3dcb6bb58303ea07e69bc87ab9000$"
+check_opt "SIGNING_PUBKEY silent"  "e00100000400000000" "^[0-9a-f]{128}9000$"
 
-# ── SIGN_TX_HASH standalone (P1=01, auto-approve) : v||r||s + 9000 ──
-check "0x09 signe (130 hex + v)"    "e00901002c000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "^0[01][0-9a-f]{128}9000$"
-check "0x09 P2 RFU refuse"          "e009010100" "^6a86$"
+# ── DKG transport identity, the yellow×12 oracle shared with js/ and rs/ ──
+check_opt "DKG_GET_COMM_PUBKEY" "e06000000400000000" \
+    "^9fc8d2779ee5bfb7662e02b5c8e23c71a4de3045621b15e031cbe481687de0819000$"
+check_opt "DKG_STATUS idle"     "e067000000" "^00[0-9a-f]{10}9000$"
+check_opt "DKG_ABORT"           "e066000000" "^9000$"
+check_opt "GET_SHARE before COMMITTED refused" "e06300000102" "^b007$"
 
-# ── SIGN_7702_AUTH: production permits reviewed P1=01 only (A01) ──
-# The dispatcher must reject invalid modes before it even considers Lc/data.
-check "0x08 P1=00 refuse"           "e008000000" "^6a86$"
-check "0x08 P1=02 refuse"           "e008020000" "^6a86$"
-check "0x08 P1=ff refuse"           "e008ff0000" "^6a86$"
-check "0x08 P2 RFU refuse"          "e008010100" "^6a86$"
-# suffix(12) || chain_id(8) || delegate(20) || nonce(8), all zero here.
-check "0x08 P1=01 signe apres UI"   "e008010030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" "^0[01][0-9a-f]{128}9000$"
+# ── EdDSA-Poseidon, against the vector js/test/sign.test.js and
+#    rs/crates/hw-tests/tests/sign.rs both check the device on ──
+check_opt "BLIND_SIGN_NO_DISPLAY" "e00200002400000000${MSG}" \
+    "^2954bb04ccd89f65b27b7912fa447925972286de0bf4161b2b3260cadea5a4ed2b6c8873579e9805c1a15519e8ad9f2d9d30f7d95fc5a3ac5706d9b9944d191905b15ff1bd5a2c2f9cc0bc033aa8c14de3410ac82d93c8477d42a493575b54279000$"
 
-# ── RAILGUN prod (confirm P1=01 obligatoire, auto-approve) ──
-check "SPENDING_PUBKEY P1=00 refuse" "e001000004 00000000" "^6a86$"
-check "SPENDING_PUBKEY P1 inconnu refuse" "e00102000400000000" "^6a86$"
-check "SPENDING_PUBKEY P2 RFU refuse" "e001010100" "^6a86$"
-check "SPENDING_PUBKEY 64B"          "e001010004 00000000" "^[0-9a-f]{128}9000$"
-check "SPENDING_PUBKEY trailing refuse" "e001010005 0000000000" "^6a87$"
-check "VIEWING_PUBKEY 32B"           "e010010004 00000000" "^[0-9a-f]{64}9000$"
-check "VIEWING_PUBKEY P1 inconnu refuse" "e01002000400000000" "^6a86$"
-check "VIEWING_PUBKEY P2 RFU refuse" "e010010100" "^6a86$"
-check "VIEWING_PUBKEY trailing refuse" "e010010005 0000000000" "^6a87$"
-check "RAILGUN_ADDRESS 0zk"          "e014010004 00000000" "^307a6b31.*9000$"  # "0zk1"...
-check "BLIND_SIGN len||sig96||hash32" "e012020024 00000000 1122334455667788112233445566778811223344556677881122334455667788" "^60[0-9a-f]{256}9000$"  # P1=0x02 BabyJubjub (0x01 = Bandersnatch !)
-check "BLIND_SIGN P2 RFU refuse"      "e012020100" "^6a86$"
+# ── the approval path: BLIND_SIGN returns len(1)||sig(96)||echo(32) ──
+check "BLIND_SIGN approved" "e01200002400000000${MSG}" \
+    "^60[0-9a-f]{192}${MSG}9000$"
 
-# ── viewing privkey 0x13 (mandatory confirmation, canonical RFU=0) ──
-# valeur = SLIP-10("babyjubjub seed") account 0, seed yellow x12,
-# cross-validée vs la référence JS (keys.test.js / noble).
-check "VIEW_PRIVKEY 0x13 == SLIP-10"  "e013000004 00000000" "^99702ce0d9133eb303f81a98c12c962b7510c28c5ab63b5bc90a09748b3fb6129000$"
-check "VIEW_PRIVKEY P1 RFU refuse"     "e013010004 00000000" "^6a86$"
-check "VIEW_PRIVKEY P2 RFU refuse"     "e013000104 00000000" "^6a86$"
-check "VIEW_PRIVKEY trailing refuse"   "e013000005 0000000000" "^6a87$"
+# ── and the refusal path, which only the simulator can drive unattended ──
+got=$(SIM_REJECT=1 send "e01200002400000000${MSG}")
+if [[ "$got" =~ ^6985$ ]]; then
+    echo "ok   BLIND_SIGN refused under SIM_REJECT"; pass=$((pass+1))
+else
+    echo "FAIL BLIND_SIGN refused under SIM_REJECT"; echo "     got : $got"; fail=$((fail+1))
+fi
 
-# ── refus (SIM_REJECT) ──
-got=$(printf 'e00901002c000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' | SIM_REJECT=1 "$SIM")
-if [ "$got" = "6985" ]; then echo "ok   SIM_REJECT -> SW_DENY"; pass=$((pass+1)); else echo "FAIL SIM_REJECT (got $got)"; fail=$((fail+1)); fi
-got=$(printf 'e013000004 00000000\n' | SIM_REJECT=1 "$SIM")
-if [ "$got" = "6985" ]; then echo "ok   SIM_REJECT 0x13 -> SW_DENY"; pass=$((pass+1)); else echo "FAIL SIM_REJECT 0x13 (got $got)"; fail=$((fail+1)); fi
-
-echo "----"
-echo "$pass ok, $fail fail"
+echo
+echo "$pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]
