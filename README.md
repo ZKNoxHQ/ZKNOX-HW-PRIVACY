@@ -171,6 +171,52 @@ share lives in RAM with no `nvm_write`, `FROST_HW_SIGN` releases `z_i` with
 no user confirmation, `DKG_FINALIZE` shows nothing — is in
 [src/zkn_features.h](src/zkn_features.h).
 
+### Every device at once
+
+```shell
+./docker.sh
+./build-all.sh                               # every device, both modes
+./build-all.sh --prod                        # production only
+DEVICES="nanos2 flex" ./build-all.sh         # restrict to those targets
+BACKEND=cx ./build-all.sh                    # the syscall backend instead
+```
+
+`build-all.sh` discovers the SDKs the container carries, asks the Makefile
+for each one's target rather than guessing it from the variable's name, and
+builds every device `ledger_app.toml` declares twice:
+
+```text
+build/prod/<target>/app.elf  app.apdu  artifact-manifest.txt   MODE=prod,  FROST=0
+build/dev/<target>/app.elf   app.apdu  artifact-manifest.txt   MODE=debug, FROST=1
+build/toolchain.txt
+```
+
+Both trees are committed, each binary beside a manifest naming the commit,
+the submodule commit, the backend, the mode, the FROST gate and the ELF's
+sha256. The development binaries carry the key-extraction instructions, so
+what they are is written down rather than left to be discovered; the point of
+publishing them is that anyone testing against this app runs the binary the
+suites were run on.
+
+`build/toolchain.txt` records what those binaries were built with — app
+version, both commits, and each SDK's path, API level and git describe —
+together with the OS of whatever device is attached. That pair is worth
+having written down: `make load` refuses a device whose OS was built against
+another API level than the SDK, with nothing but `SW 511f` to say so.
+
+The script also holds an invariant the Makefile alone does not.
+`build/<target>/bin/` is restaged after every successful build, whatever its
+mode, so building `MODE=debug` to flash a test device replaced the staged
+release binary with one exposing `BLIND_SIGN_NO_DISPLAY`,
+`SIGN_WITH_PRIVKEY` and the DKG key-extraction instructions — and a
+`git add -A` afterwards committed it. `build-all.sh` builds the development
+tree first and stages production last and explicitly, so that copy is the
+production binary whatever order the devices come in:
+
+```shell
+grep -h . build/*/bin/configuration.txt      # every line: mode=prod, frost=0
+```
+
 ## Tests
 
 Standard ragger/Speculos functional tests:
@@ -248,6 +294,14 @@ rs/
 ├── crates/hw-tests/          the js/ suite in Rust (cargo test)
 └── crates/zknox-sim/         sim/ linked in: the dispatcher's contract, swept
 sim/                      host simulator: the real dispatcher, no emulator
+build/
+├── prod/<target>/        MODE=prod binaries, with their manifests
+├── dev/<target>/         MODE=debug binaries, with their manifests
+├── toolchain.txt         SDK API levels and the attached device's OS
+└── <target>/bin/         the staged release copy, always production
+build-all.sh              every device, both modes
+docker.sh                 the Ledger dev container
+run-js-tests.sh  run-rs-tests.sh  run-rs-device-tests.sh  run-sim-tests.sh
 ```
 
 ## Licence
