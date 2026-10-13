@@ -19,8 +19,6 @@ debug/
 /build/*/*
 !/build/*/bin/
 /build/*/bin/*
-!/build/*/bin/app.elf
-!/build/*/bin/app.apdu
 
 # Python
 __pycache__/
