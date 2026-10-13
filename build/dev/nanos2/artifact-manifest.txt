@@ -1,0 +1,7 @@
+target=nanos2
+backend=sw
+mode=debug
+frost=1
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=3fee9621e20b46ba49b570edb5d07d99687239dd57d58b75b903582da5e8f7c8

@@ -1,0 +1,7 @@
+target=apex_p
+backend=sw
+mode=debug
+frost=1
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=d97d25d990853fcb35834a7df5c8952723106b6dba9db0196c1bff66a24b8e5f

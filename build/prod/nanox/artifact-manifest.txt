@@ -1,0 +1,7 @@
+target=nanox
+backend=sw
+mode=prod
+frost=0
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=0ea14dab7e07176798aa3b3101acf068865b46839939d62a993236bf919ba6fe

@@ -1,0 +1,7 @@
+target=stax
+backend=sw
+mode=prod
+frost=0
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=f0c654c42ec39d1fb6d2057e5c55ba578b9266db93ce8491ea6a3f2f164a34f4

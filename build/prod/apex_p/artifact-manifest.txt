@@ -1,0 +1,7 @@
+target=apex_p
+backend=sw
+mode=prod
+frost=0
+commit=a3fb13bf7e655f3074072b3516b024b5b8b1f4fe
+zknox_commit=2b1b212472f33cdbcaea9fa8924ed8921bb88795
+elf_sha256=cb3fc693f5a6d09de440c034c26396d78845b395eefc23f8610a6cfe507da982
