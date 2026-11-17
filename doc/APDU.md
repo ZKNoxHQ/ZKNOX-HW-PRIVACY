@@ -52,7 +52,7 @@ or BOLOS refuses the corresponding `os_derive` with a signing error.
 |----|------|---------|
 | `0x9000` | `SW_OK` | Success. |
 | `0x6985` | `SW_DENY` | User rejected on the device. |
-| `0x6A80` | `SW_INCORRECT_DATA` | Malformed payload. |
+| `0x6A80` | `SW_INCORRECT_DATA` | Well-sized payload with an invalid value (e.g. a `BLIND_SIGN` message `≥ p`). |
 | `0x6A86` | `SW_WRONG_P1P2` | Invalid P1/P2. |
 | `0x6A87` | `SW_WRONG_DATA_LENGTH` | `Lc` not the expected length. |
 | `0x6D00` | `SW_INS_NOT_SUPPORTED` | Unknown instruction (or a flag-gated INS absent from this build). |
@@ -89,12 +89,20 @@ signs with. Account is a 4-byte big-endian index; the firmware pins the path.
 
 ### `0x12` BLIND_SIGN
 
-EdDSA-Poseidon signature over an opaque 32-byte message, with a blind-sign
-approval (shows account index + message).
+EdDSA-Poseidon signature over a 32-byte message, with a blind-sign approval
+(shows account index + message). The device gives the message no meaning, but
+it must be an element of the selected curve's base field.
 
 - **P1** = curve id: `0x00` BabyJubJub (default), `0x01` Bandersnatch, `0x02`
   BabyJubJub. **P2**: `0x00`.
-- **CData** (36): `account(4 BE) || msg(32)`.
+- **CData** (36): `account(4 BE) || msg(32)`. `msg` is read as a
+  **little-endian** integer and must be `< p`, the base-field modulus of the
+  curve in P1: the BN254 scalar field for BabyJubJub
+  (`0x30644e72…f0000001`), the BLS12-381 scalar field for Bandersnatch
+  (`0x73eda753…00000001`). Otherwise the request is refused with `0x6A80`
+  before anything is displayed. A uniformly random 32-byte string is out of
+  range ~81% of the time on BabyJubJub and ~55% on Bandersnatch, so hash
+  outputs must be reduced by the host first.
 - **Response** (on approve, 129 bytes): `sigLen(1) = 96 || R8x(32) || R8y(32) ||
   S(32) || msg(32)`. The trailing 32 bytes echo the signed message.
 

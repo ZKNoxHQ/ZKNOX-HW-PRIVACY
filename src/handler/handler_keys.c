@@ -68,7 +68,7 @@ int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
     {
         explicit_bzero(derived_priv, sizeof(derived_priv));
         explicit_bzero(chain_code, sizeof(chain_code));
-        return io_send_sw(error);
+        return io_send_sw(SW_SIGNATURE_FAIL);
     }
 
     error = derive_public_key(KEY_TYPE_SPENDING, PUBKEY_FORMAT_RAW,
@@ -79,7 +79,7 @@ int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
     explicit_bzero(chain_code, sizeof(chain_code));
 
     if (error != ZKN_OK)
-        return io_send_sw(error);
+        return io_send_sw(SW_SIGNATURE_FAIL);
 
     if (pubkey_len == 0 || pubkey_len > sizeof(G_context.pk_info.raw_public_key))
         return io_send_sw(SW_WRONG_RESPONSE_LENGTH);
@@ -138,7 +138,7 @@ int handler_viewing_pubkey(buffer_t *cdata, uint8_t p1)
     {
         explicit_bzero(derived_priv, sizeof(derived_priv));
         explicit_bzero(chain_code, sizeof(chain_code));
-        return io_send_sw(error);
+        return io_send_sw(SW_SIGNATURE_FAIL);
     }
 
     error = derive_public_key(KEY_TYPE_VIEWING, PUBKEY_FORMAT_RAW,
@@ -148,7 +148,7 @@ int handler_viewing_pubkey(buffer_t *cdata, uint8_t p1)
     explicit_bzero(chain_code, sizeof(chain_code));
 
     if (error != ZKN_OK)
-        return io_send_sw(error);
+        return io_send_sw(SW_SIGNATURE_FAIL);
 
     if (pubkey_len == 0 || pubkey_len > sizeof(G_context.pk_info.raw_public_key))
         return io_send_sw(SW_WRONG_RESPONSE_LENGTH);

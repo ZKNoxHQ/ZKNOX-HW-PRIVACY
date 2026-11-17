@@ -28,14 +28,18 @@ static char g_vk_account[12];
 
 static void review_choice(bool confirm)
 {
-    validate_viewing_privkey(confirm);
-    if (confirm)
+    bool exported = validate_viewing_privkey(confirm);
+    if (!confirm)
+    {
+        nbgl_useCaseStatus("Viewing key\nrejected", false, ui_menu_main);
+    }
+    else if (exported)
     {
         nbgl_useCaseStatus("Viewing key\nexported", true, ui_menu_main);
     }
     else
     {
-        nbgl_useCaseStatus("Viewing key\nrejected", false, ui_menu_main);
+        nbgl_useCaseStatus("Export failed", false, ui_menu_main);
     }
 }
 

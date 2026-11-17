@@ -70,13 +70,13 @@ int handler_railgun_address(buffer_t *cdata, uint8_t p1, uint8_t p2)
     // 1) Viewing privkey → viewing pubkey (Ed25519 RFC 8032, 32 B).
     err = derive_private_key(KEY_TYPE_VIEWING, account, viewing_priv, chain_code);
     if (err != ZKN_OK) {
-        rc = io_send_sw(err);
+        rc = io_send_sw(SW_SIGNATURE_FAIL);
         goto out;
     }
     err = derive_public_key(KEY_TYPE_VIEWING, PUBKEY_FORMAT_RAW,
                             viewing_priv, viewing_pub, &viewing_pub_len);
     if (err != ZKN_OK) {
-        rc = io_send_sw(err);
+        rc = io_send_sw(SW_SIGNATURE_FAIL);
         goto out;
     }
     if (viewing_pub_len != ZKN_0ZK_VK_LEN) {
@@ -102,7 +102,7 @@ int handler_railgun_address(buffer_t *cdata, uint8_t p1, uint8_t p2)
         if (err != ZKN_OK) {
             explicit_bzero(spend_priv,  sizeof(spend_priv));
             explicit_bzero(spend_chain, sizeof(spend_chain));
-            rc = io_send_sw(err);
+            rc = io_send_sw(SW_SIGNATURE_FAIL);
             goto out;
         }
         err = derive_public_key(KEY_TYPE_SPENDING, PUBKEY_FORMAT_RAW,
@@ -110,7 +110,7 @@ int handler_railgun_address(buffer_t *cdata, uint8_t p1, uint8_t p2)
         explicit_bzero(spend_priv,  sizeof(spend_priv));
         explicit_bzero(spend_chain, sizeof(spend_chain));
         if (err != ZKN_OK) {
-            rc = io_send_sw(err);
+            rc = io_send_sw(SW_SIGNATURE_FAIL);
             goto out;
         }
         if (spend_pub_len != PUBKEY_BABYJUBJUB_LEN) {

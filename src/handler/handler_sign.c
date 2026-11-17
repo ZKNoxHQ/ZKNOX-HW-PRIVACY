@@ -42,6 +42,45 @@ static int decode_sign_curve(uint8_t p1, uint32_t *out)
   return -1;
 }
 
+// EddsaPoseidon_Sign_final refuses a message that is not an element of the
+// curve's base field: the 32 bytes read as a little-endian integer must be
+// < p. Run the same check before the review, so the user is never asked to
+// approve a request the signer will then reject. The modulus comes from the
+// library's own curve, so both checks use the same bound.
+// Sets *ok to true iff msg_le < p; returns a zkn error on failure.
+static int msg_is_curve_field_element(uint32_t curveID, const uint8_t *msg_le, bool *ok)
+{
+  ZKN_ERROR_INIT();
+  bool bn_locked = false;
+  uint8_t p_be[32];
+  zkn_edcurve_t curve;
+
+  *ok = false;
+
+  ZKN_CHECK(zkn_bn_lock(32, 0));
+  bn_locked = true;
+
+  ZKN_CHECK(tEdwards_Curve_alloc_init(&curve, curveID));
+  if (curve.fieldsize8 != 32)
+  {
+    error = ZKN_ERR_INVALID_PARAM;
+    goto end;
+  }
+  ZKN_CHECK(zkn_bn_export(curve.modulus, p_be, 32));
+
+  for (size_t i = 0; i < 32; i++)
+  {
+    uint8_t m = msg_le[31 - i];
+    if (m < p_be[i]) { *ok = true; break; }
+    if (m > p_be[i]) break;
+  }
+
+end:
+  if (bn_locked)
+    zkn_bn_unlock();
+  return error;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // handler_eddsa_poseidon_sign_stored
 //
@@ -94,7 +133,9 @@ end:
 // UI, derive the key and sign once the user confirms.
 //
 // P1: curveID (0x00 = legacy BabyJubjub, 0x01 = Bandersnatch, 0x02 = BabyJubjub).
-// Data: account(4 BE) || msg(32) = 36 bytes
+// Data: account(4 BE) || msg(32) = 36 bytes. msg is a little-endian element
+// of the curve's base field; anything >= p is refused with SW_INCORRECT_DATA
+// before the review is shown.
 // Returns len(1) | sig(96) | msg(32) after the user confirms.
 // ─────────────────────────────────────────────────────────────────────────
 int handler_blind_sign(uint8_t p1, buffer_t *cdata)
@@ -105,6 +146,12 @@ int handler_blind_sign(uint8_t p1, buffer_t *cdata)
   uint32_t curveID;
   if (decode_sign_curve(p1, &curveID) != 0)
     return io_send_sw(SW_WRONG_P1P2);
+
+  bool msg_ok = false;
+  if (msg_is_curve_field_element(curveID, cdata->ptr + 4, &msg_ok) != ZKN_OK)
+    return io_send_sw(SW_SIGNATURE_FAIL);
+  if (!msg_ok)
+    return io_send_sw(SW_INCORRECT_DATA);
 
   explicit_bzero(&G_context, sizeof(G_context));
   G_context.req_type = CONFIRM_SIGN;
@@ -141,6 +188,13 @@ int handler_blind_sign_no_display(uint8_t p1, buffer_t *cdata)
   uint32_t curveID;
   if (decode_sign_curve(p1, &curveID) != 0)
     return io_send_sw(SW_WRONG_P1P2);
+
+  // Same status word as BLIND_SIGN for a message outside the field.
+  bool msg_ok = false;
+  if (msg_is_curve_field_element(curveID, cdata->ptr + 4, &msg_ok) != ZKN_OK)
+    return io_send_sw(SW_SIGNATURE_FAIL);
+  if (!msg_ok)
+    return io_send_sw(SW_INCORRECT_DATA);
 
   uint8_t derived_priv[64];
   uint8_t chain_code[32];
@@ -179,7 +233,7 @@ end:
     zkn_bn_unlock();
   explicit_bzero(derived_priv, sizeof(derived_priv));
   explicit_bzero(chain_code, sizeof(chain_code));
-  return io_send_sw(error);
+  return io_send_sw(SW_SIGNATURE_FAIL);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -234,6 +288,6 @@ end:
   if (bn_locked)
     zkn_bn_unlock();
   explicit_bzero(prv, sizeof(prv));
-  return io_send_sw(error);
+  return io_send_sw(SW_SIGNATURE_FAIL);
 }
 #endif // ZKNOX_DEBUG

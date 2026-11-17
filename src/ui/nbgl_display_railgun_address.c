@@ -31,14 +31,18 @@ static nbgl_contentTagValueList_t pairList;
 
 static void review_choice(bool confirm)
 {
-    validate_railgun_0zk_address(confirm);
-    if (confirm)
+    bool sent = validate_railgun_0zk_address(confirm);
+    if (!confirm)
+    {
+        nbgl_useCaseReviewStatus(STATUS_TYPE_ADDRESS_REJECTED, ui_menu_main);
+    }
+    else if (sent)
     {
         nbgl_useCaseReviewStatus(STATUS_TYPE_ADDRESS_VERIFIED, ui_menu_main);
     }
     else
     {
-        nbgl_useCaseReviewStatus(STATUS_TYPE_ADDRESS_REJECTED, ui_menu_main);
+        nbgl_useCaseStatus("Export failed", false, ui_menu_main);
     }
 }
 

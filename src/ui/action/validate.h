@@ -11,10 +11,15 @@
  * G_context is wiped on both paths, so STATE_APPROVED never survives the
  * callback and no signing token is left armed for a later APDU.
  *
+ * Every validate_* action first checks that G_context holds a parsed request
+ * of its own type, and answers SW_BAD_STATE otherwise.
+ *
  * @param[in] choice
  *   User choice (either approved or rejected).
+ * @return true iff the user approved and the signature was sent; the caller
+ *   uses it to pick the status screen.
  */
-void validate_eddsa_poseidon_sign(bool choice);
+bool validate_eddsa_poseidon_sign(bool choice);
 
 /**
  * Action for signing-pubkey export approval. On Approve, sends the
@@ -23,8 +28,9 @@ void validate_eddsa_poseidon_sign(bool choice);
  * SW_DENY. Wipes G_context on both paths.
  *
  * @param[in] choice  user choice (approved or rejected).
+ * @return true iff the user approved and the pubkey was sent.
  */
-void validate_pubkey_export(bool choice);
+bool validate_pubkey_export(bool choice);
 
 /**
  * Action for viewing-private-key export approval (INS 0x13). On Approve,
@@ -33,8 +39,9 @@ void validate_pubkey_export(bool choice);
  * before returning; G_context is wiped on both paths.
  *
  * @param[in] choice  user choice (approved or rejected).
+ * @return true iff the user approved and the key was sent.
  */
-void validate_viewing_privkey(bool choice);
+bool validate_viewing_privkey(bool choice);
 
 /**
  * Action for 0zk1… address confirmation (INS 0x14). On Approve, sends the
@@ -42,5 +49,6 @@ void validate_viewing_privkey(bool choice);
  * G_context on both paths.
  *
  * @param[in] choice  user choice (approved or rejected).
+ * @return true iff the user approved and the address was sent.
  */
-void validate_railgun_0zk_address(bool choice);
+bool validate_railgun_0zk_address(bool choice);

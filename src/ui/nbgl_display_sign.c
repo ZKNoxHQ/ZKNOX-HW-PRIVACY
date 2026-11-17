@@ -41,14 +41,20 @@ static nbgl_contentTagValueList_t pairList;
 
 static void review_choice(bool confirm)
 {
-    validate_eddsa_poseidon_sign(confirm);
-    if (confirm)
+    bool signed_ok = validate_eddsa_poseidon_sign(confirm);
+    if (!confirm)
+    {
+        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_menu_main);
+    }
+    else if (signed_ok)
     {
         nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_SIGNED, ui_menu_main);
     }
     else
     {
-        nbgl_useCaseReviewStatus(STATUS_TYPE_TRANSACTION_REJECTED, ui_menu_main);
+        /* Approved but not signed: never show "signed" for a request the
+         * host received an error for. */
+        nbgl_useCaseStatus("Signing failed", false, ui_menu_main);
     }
 }
 
