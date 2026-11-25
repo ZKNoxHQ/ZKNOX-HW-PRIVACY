@@ -171,6 +171,32 @@ share lives in RAM with no `nvm_write`, `FROST_HW_SIGN` releases `z_i` with
 no user confirmation, `DKG_FINALIZE` shows nothing — is in
 [src/zkn_features.h](src/zkn_features.h).
 
+### Nano S
+
+The original Nano S builds against the LNS SDK and takes `FROST=0` only:
+
+```shell
+make -j BOLOS_SDK=$NANOS_SDK                 # MODE=prod
+make -j BOLOS_SDK=$NANOS_SDK MODE=debug      # FROST=0 on this target
+```
+
+It has 4.6 KB of RAM and an ARMv6-M core, so the Makefile defines
+`ZKN_LOW_RAM` for it: same keys and signatures, smaller stack, about 40% more
+field multiplications. `BACKEND=cx` builds but cannot be run in Speculos:
+0.25.5 is the last release with this model, and it does not emulate
+`cx_mont_*` for it. Details in [DECISIONS.md](DECISIONS.md).
+
+Two scripts check the stack budget:
+
+```shell
+python3 tools/stackdepth.py build/nanos/bin/app.elf main validate_eddsa_poseidon_sign
+python3 tools/nanos_stack_hwm.py build/nanos/bin/app.elf    # Speculos running
+```
+
+The first gives the static worst case of a call chain from the disassembly
+(direct calls only). The second paints the stack of the emulated device and
+reports the high-water mark of each production command.
+
 ### Every device at once
 
 ```shell

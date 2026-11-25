@@ -128,12 +128,21 @@ endif
 # The safe development combinations remain expressible:
 #     make MODE=debug FROST=0    debug surface without the ceremony
 #     make MODE=debug FROST=1    debug ceremony / signing tests
+# Nano S has no threshold surface: the DKG transport needs cx_aes_gcm_*,
+# absent from the LNS cxng, and with the ceremony state the statics take
+# 3.5 KB of the 4.6 KB of RAM. Debug builds default to FROST=0 there.
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+    FROST ?= 0
+endif
 ifeq ($(MODE),debug)
     FROST ?= 1
 else
     FROST ?= 0
 endif
 ifeq ($(FROST),1)
+    ifeq ($(TARGET_NAME),TARGET_NANOS)
+        $(error FROST=1 is not available on Nano S: no AES-GCM in the LNS SDK, not enough RAM)
+    endif
     ifeq ($(MODE),prod)
         $(error MODE=prod FROST=1 is disabled: see the BLOCKING list in src/zkn_features.h)
     endif
@@ -162,13 +171,14 @@ GEN_SRC_DIR      := $(TARGET_BUILD_DIR)/gen_src
 
 # Application icons following guidelines:
 # https://developers.ledger.com/docs/embedded-app/design-requirements/#device-icon
+ICON_NANOS = icons/app_zknox_16px.gif
 ICON_NANOX = icons/app_zknox_14px.gif
 ICON_NANOSP = icons/app_zknox_14px.gif
 ICON_STAX = icons/app_zknox_32px.gif
 ICON_FLEX = icons/app_zknox_40px.gif
 ICON_APEX_P = icons/app_zknox_32px_apex.png
 
-ifeq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOX TARGET_NANOS2))
+ifeq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOS TARGET_NANOX TARGET_NANOS2))
     ICON_HOME_NANO = glyphs/home_zknox_14px.gif
 endif
 
@@ -196,8 +206,19 @@ PATH_APP_LOAD_PARAMS = "44'/1984'" "420'/1984'" "421'/1984'"
 VARIANT_PARAM = COIN
 VARIANT_VALUES = BOL
 
-# Use ARM Thumb-2 ASM for zkn_mont256 core functions.
+# Use ARM Thumb-2 ASM for zkn_mont256 core functions. The Nano S secure
+# element is ARMv6-M (Thumb-1 only): it takes the C versions instead.
+ifneq ($(TARGET_NAME),TARGET_NANOS)
 DEFINES += ZKN_MONT256_ASM
+endif
+
+# Nano S: 4.5 KB of RAM for statics and stack together. ZKN_LOW_RAM selects
+# the library's low-RAM variants (2-bit fixed-base window, Poseidon MDS
+# matrix read from flash, phased signing). Same results, more field
+# multiplications.
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+DEFINES += ZKN_LOW_RAM
+endif
 
 ########################################
 #     Application custom permissions   #
@@ -244,7 +265,12 @@ ifeq ($(BACKEND),cx)
 else
     CFLAGS  += -DZKN_BN_BACKEND_SW
 endif
+ifneq ($(TARGET_NAME),TARGET_NANOS)
 CFLAGS  += -DZKN_MONT256_ASM
+endif
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+CFLAGS  += -DZKN_LOW_RAM
+endif
 
 # Same belt-and-braces for ZKNOX_DEBUG: inject into CFLAGS directly so
 # DEFINES propagation through the SDK can't accidentally drop it.

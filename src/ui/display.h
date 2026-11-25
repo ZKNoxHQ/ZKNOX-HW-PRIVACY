@@ -3,7 +3,7 @@
 #include <stdbool.h> // bool
 #include "constants.h"
 
-#if defined(TARGET_NANOX) || defined(TARGET_NANOS2)
+#if defined(TARGET_NANOS) || defined(TARGET_NANOX) || defined(TARGET_NANOS2)
 #define ICON_APP_MAIN C_app_zknox_14px
 #define ICON_APP_HOME C_home_zknox_14px
 #define ICON_APP_WARNING C_icon_warning

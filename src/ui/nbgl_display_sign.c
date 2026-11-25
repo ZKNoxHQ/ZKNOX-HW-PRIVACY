@@ -100,6 +100,19 @@ int ui_display_blind_sign_eddsa_poseidon(void)
     pairList.nbPairs = 2;
     pairList.pairs = pairs;
 
+#if defined(TARGET_NANOS)
+    // LNS SDK (API_LEVEL_LNS) has no nbgl_useCaseReviewBlindSigning: fall
+    // back to the plain review and carry the blind-sign warning in the title.
+    // The title page holds two short lines beside the icon (about 12
+    // characters each): "EdDSA-Poseidon" does not fit and gets cut.
+    nbgl_useCaseReview(TYPE_MESSAGE,
+                       &pairList,
+                       &ICON_APP_MAIN,
+                       "Blind sign\nmessage",
+                       NULL,
+                       NULL,
+                       review_choice);
+#else
     nbgl_useCaseReviewBlindSigning(TYPE_MESSAGE,
                                    &pairList,
                                    &ICON_APP_MAIN,
@@ -112,5 +125,6 @@ int ui_display_blind_sign_eddsa_poseidon(void)
 #endif
                                    NULL,
                                    review_choice);
+#endif
     return 0;
 }
