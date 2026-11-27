@@ -285,3 +285,26 @@ it instead of surfacing as a transport error. The same property is what makes
 `ZKNOX_SIM_ASAN=1` work: only the C is instrumented, so AddressSanitizer and
 UBSan run under stable Rust, and the full set passes in 31 s with the sweep
 included.
+
+## ADR-020 — a process can take the device's seat
+
+ADR-015 took Speculos out of this suite and ADR-017 put a physical device
+among simulated peers. That leaves one case uncovered: a target the simulator
+does not represent and that is not on the desk yet. The Nano S build is that
+case. It compiles other code paths than the simulator does (the low-RAM
+variants of the library, the ceremony state in NVRAM, GCM over the AES block
+syscall), so a green run on `sim/` says nothing about it.
+
+`HW_PARTICIPANT_BIN` names a program that takes the seat `HW_PARTICIPANT_ID`
+in a ceremony. The harness spawns it like a simulator and talks to it the same
+way, one hex APDU per line. What is behind it is not this suite's business:
+`tools/speculos_sim_bridge.py` forwards to a Speculos socket and can measure
+the stack of the emulated device around each command.
+
+This does not bring the Speculos backend back. The suite still knows two
+transports, a child process and USB HID, and the default run still needs
+neither an emulator nor a container. The seat is treated as a physical
+device: its seed cannot be set from here, so it only joins the ceremonies on
+the canonical seed, and its transport key is checked against the host
+derivation like everybody else's.
+

@@ -4,11 +4,31 @@
 Frame size per function = pushes + 'sub sp' (+ literal-loaded 'add sp, rX').
 Edges = direct bl / tail b to another function. Indirect calls (blx rX) are
 reported, not followed. Recursion is reported and cut.
+
+    stackdepth.py app.elf                 the 25 deepest functions
+    stackdepth.py app.elf main            deepest chain from main
+    stackdepth.py app.elf f --cut a:b     same from f, ignoring the call a -> b
+
+The analysis follows every call of a function, whatever its arguments. A
+dispatcher such as derive_public_key therefore counts its deepest branch for
+every caller; --cut removes an edge the path under study cannot take, e.g.
+
+    stackdepth.py app.elf handler_dkg_set_commits \
+        --cut derive_public_key:derive_pubkey_babyjubjub
 """
 import re, subprocess, sys, collections
 
 elf = sys.argv[1]
-roots = sys.argv[2:]
+roots = []
+cuts = set()
+argv = sys.argv[2:]
+while argv:
+    a = argv.pop(0)
+    if a == "--cut" and argv:
+        caller, _, callee = argv.pop(0).partition(":")
+        cuts.add((caller, callee))
+    else:
+        roots.append(a)
 dis = subprocess.run(["arm-none-eabi-objdump", "-d", "--no-show-raw-insn", elf],
                      capture_output=True, text=True, check=True).stdout
 funcs = collections.OrderedDict()
@@ -79,6 +99,8 @@ def depth(n, path=()):
     fr, calls, _ = info[n]
     best = (0, [])
     for c in calls:
+        if (n, c) in cuts:
+            continue
         d = depth(c, path + (n,))
         if d[0] > best[0]: best = d
     memo[n] = (fr + best[0], [(n, fr)] + best[1])
@@ -95,5 +117,7 @@ else:
         print(f"== {r}: worst-case {d} bytes")
         for n, fr in chain:
             print(f"   {fr:5d}  {n}" + ("  [indirect calls]" if info[n][2] else ""))
+if cuts:
+    print("ignored calls:", ", ".join(f"{a} -> {b}" for a, b in sorted(cuts)))
 if rec:
     print("recursion cut at:", ", ".join(sorted(rec)))

@@ -26,6 +26,7 @@
 #include "zkn_aes_gcm.h"
 #include "handler_dkg.h"
 #include "../zkn_features.h"
+#include "zkn_nv_scratch.h"
 
 #if defined(ZKN_FROST)
 
@@ -44,7 +45,51 @@ enum dkg_state {
 };
 
 /* Transient ceremony state. The coefficients are the sensitive part: they are
- * derived here and never leave, and DKG_ABORT wipes them. */
+ * derived here and never leave, and DKG_ABORT wipes them.
+ *
+ * DKG_NV(field) names a field of the public bulk (see zkn_nv_scratch.h): a
+ * member of g_dkg, except on Nano S where it is a read-only view of the NVRAM
+ * scratch area and writes go through ZKN_NV_PUT / ZKN_NV_FLUSH. */
+#if defined(ZKN_CEREMONY_SCRATCH_NVM)
+
+/* Public: sent by the host or returned to it. */
+typedef struct {
+    uint8_t  epoch[VSS_EPOCH_LEN];
+    uint8_t  name[VSS_MAX_NAME_LEN];
+    uint8_t  hj[DKG_MAX_N][32];                /* H(C_j) per dealer */
+    uint8_t  c0[DKG_MAX_N][64];                /* C_{j,0}, for A = sum */
+    uint8_t  hk[DKG_MAX_N][32];                /* comm pubkeys */
+    uint8_t  last_c0[64];                      /* monotonicity check */
+    uint8_t  comp[DKG_MAX_N * DKG_MAX_T * 32]; /* compressed commitments, digest input */
+    uint8_t  digest[32];
+    uint8_t  A[64];
+} dkg_scratch_t;
+
+const dkg_scratch_t N_dkg_scratch_real;
+#define DKG_NV(field) (((const dkg_scratch_t *)PIC(&N_dkg_scratch_real))->field)
+
+/* RAM: the state machine and every secret. */
+static struct {
+    uint8_t  state;
+    uint32_t account;
+    size_t   id, t, n;
+    size_t   name_len;
+
+    uint8_t  coeffs[DKG_MAX_T * 32];           /* secret */
+
+    uint8_t  dealer_id[DKG_MAX_N];
+    size_t   ndealers;
+    int      have_last;
+    size_t   comp_len;
+
+    uint8_t  acc[32];                          /* sum of received shares, secret */
+    uint16_t recv_mask;
+
+    uint8_t  skshare_div8[32];                 /* secret, see below */
+} g_dkg;
+
+#else
+
 static struct {
     uint8_t  state;
     uint32_t account;
@@ -80,6 +125,17 @@ static struct {
     uint8_t  A[64];
 } g_dkg;
 
+#define DKG_NV(field) (g_dkg.field)
+
+#endif
+
+/* C_{k,0} as tEdwards_init wants it: the callee takes uint8_t * and only reads. */
+#if defined(ZKN_CEREMONY_SCRATCH_NVM)
+#define DKG_C0(k) ((uint8_t *)DKG_NV(c0)[k])
+#else
+#define DKG_C0(k) (g_dkg.c0[k])
+#endif
+
 int dkg_get_signer(uint8_t *skshare_out, uint8_t *A_out,
                    size_t *id_out, size_t *t_out, size_t *n_out)
 {
@@ -103,7 +159,7 @@ signer_cleanup:
         (void)zkn_bn_unlock();
         if (rc != 0) return -1;
     }
-    if (A_out)       memcpy(A_out, g_dkg.A, 64);
+    if (A_out)       memcpy(A_out, DKG_NV(A), 64);
     if (id_out)      *id_out = g_dkg.id;
     if (t_out)       *t_out  = g_dkg.t;
     if (n_out)       *n_out  = g_dkg.n;
@@ -138,6 +194,11 @@ static int dkg_index_of(size_t id) {
 static void dkg_wipe(void) {
     explicit_bzero(&g_dkg, sizeof(g_dkg));
     g_dkg.state = DKG_IDLE;
+#if defined(ZKN_CEREMONY_SCRATCH_NVM)
+    /* Public data and unreachable once the state is IDLE: cleared so that a
+     * wipe leaves nothing of the ceremony behind, as it does in RAM. */
+    ZKN_NV_ZERO(&DKG_NV(epoch), sizeof(dkg_scratch_t));
+#endif
     /* The FROST nonces are a secret of the share that just went away: without
      * this, (d_i, e_i) and FS_NONCED survive an explicit wipe, and a restore
      * could sign with commitments published under the previous provisioning. */
@@ -193,7 +254,7 @@ int handler_dkg_deal(buffer_t *cdata)
     dkg_wipe();
     g_dkg.account = account; g_dkg.id = id; g_dkg.t = t; g_dkg.n = n;
     g_dkg.name_len = nl;
-    if (nl) memcpy(g_dkg.name, d + 8, nl);
+    if (nl) ZKN_NV_PUT(DKG_NV(name), d + 8, nl);
 
     /* Audit L3: single cleanup point for the sensitive intermediates.
      * seed[64] carries the raw spending seed; cc[32] the chain code; p
@@ -204,6 +265,7 @@ int handler_dkg_deal(buffer_t *cdata)
      * initialiser (-Wjump-misses-init). */
     uint8_t seed[64] = {0}, cc[32] = {0};
     uint8_t out[VSS_EPOCH_LEN + DKG_MAX_T * 64];
+    ZKN_NV_STAGE(epoch_stage, VSS_EPOCH_LEN);
     participant_t p;
     zkn_edcurve_t curve;
     int sw = 0, rc = 0;
@@ -214,10 +276,11 @@ int handler_dkg_deal(buffer_t *cdata)
      * (recovery), so this is what stops two ceremonies of the same (n,t,name)
      * from reusing the same polynomial. Drawn on-device: a host-supplied epoch
      * could be replayed. */
-    if (cx_get_random_bytes(g_dkg.epoch, VSS_EPOCH_LEN) != CX_OK) {
-        explicit_bzero(g_dkg.epoch, VSS_EPOCH_LEN);
+    if (cx_get_random_bytes(ZKN_NV_DST(DKG_NV(epoch), epoch_stage), VSS_EPOCH_LEN) != CX_OK) {
+        explicit_bzero(ZKN_NV_DST(DKG_NV(epoch), epoch_stage), VSS_EPOCH_LEN);
         sw = SW_SIGNATURE_FAIL; goto cleanup;
     }
+    ZKN_NV_FLUSH(DKG_NV(epoch), epoch_stage, VSS_EPOCH_LEN);
 
     if (derive_private_key(KEY_TYPE_SPENDING, account, seed, cc) != ZKN_OK) {
         sw = SW_SIGNATURE_FAIL; goto cleanup;
@@ -225,8 +288,8 @@ int handler_dkg_deal(buffer_t *cdata)
 
     p.id = id; p.n = n; p.name_len = nl;
     memcpy(p.seed, seed, 32);
-    memcpy(p.epoch, g_dkg.epoch, VSS_EPOCH_LEN);
-    if (nl) memcpy(p.name, g_dkg.name, nl);
+    memcpy(p.epoch, DKG_NV(epoch), VSS_EPOCH_LEN);
+    if (nl) memcpy(p.name, DKG_NV(name), nl);
 
     if (zkn_bn_lock(32, 0) != 0) {
         sw = SW_SIGNATURE_FAIL; goto cleanup;
@@ -247,7 +310,7 @@ int handler_dkg_deal(buffer_t *cdata)
         dkg_wipe(); sw = SW_SIGNATURE_FAIL; goto cleanup;
     }
     bn_locked = false;
-    memcpy(out, g_dkg.epoch, VSS_EPOCH_LEN);
+    memcpy(out, DKG_NV(epoch), VSS_EPOCH_LEN);
     g_dkg.state = DKG_DEALT;
 
     explicit_bzero(seed, sizeof(seed));
@@ -322,16 +385,19 @@ int handler_dkg_set_commits(uint8_t p1, buffer_t *cdata)
 
         /* Sorted order is what makes the digest canonical: every device must
          * absorb the same byte string. A host that reorders is rejected here. */
-        if (g_dkg.have_last && dkg_c0_cmp(g_dkg.last_c0, cj) >= 0)
+        if (g_dkg.have_last && dkg_c0_cmp(DKG_NV(last_c0), cj) >= 0)
             return io_send_sw(SW_WRONG_DATA_LENGTH);
-        memcpy(g_dkg.last_c0, cj, 64);
+        ZKN_NV_PUT(DKG_NV(last_c0), cj, 64);
         g_dkg.have_last = 1;
 
         /* Accumulate the compressed points (digest input), and keep only
          * H_j + C_{j,0} + HK_j per dealer. */
-        if (g_dkg.comp_len + g_dkg.t * 32 > sizeof(g_dkg.comp)) return io_send_sw(SW_WRONG_DATA_LENGTH);
-        for (size_t k = 0; k < g_dkg.t; k++)
-            dkg_compress(cj + k * 64, g_dkg.comp + g_dkg.comp_len + k * 32);
+        if (g_dkg.comp_len + g_dkg.t * 32 > sizeof(DKG_NV(comp))) return io_send_sw(SW_WRONG_DATA_LENGTH);
+        for (size_t k = 0; k < g_dkg.t; k++) {
+            ZKN_NV_STAGE(comp_stage, 32);
+            dkg_compress(cj + k * 64, ZKN_NV_DST(DKG_NV(comp) + g_dkg.comp_len + k * 32, comp_stage));
+            ZKN_NV_FLUSH(DKG_NV(comp) + g_dkg.comp_len + k * 32, comp_stage, 32);
+        }
         g_dkg.comp_len += g_dkg.t * 32;
 
         uint8_t hj[64];
@@ -339,9 +405,9 @@ int handler_dkg_set_commits(uint8_t p1, buffer_t *cdata)
 
         size_t k = g_dkg.ndealers++;
         g_dkg.dealer_id[k] = (uint8_t)id;
-        memcpy(g_dkg.hj[k], hj, 32);
-        memcpy(g_dkg.c0[k], cj, 64);
-        memcpy(g_dkg.hk[k], hk, 32);
+        ZKN_NV_PUT(DKG_NV(hj)[k], hj, 32);
+        ZKN_NV_PUT(DKG_NV(c0)[k], cj, 64);
+        ZKN_NV_PUT(DKG_NV(hk)[k], hk, 32);
     }
 
     if (p1 != P1_LAST) return io_send_sw(SW_OK);
@@ -355,9 +421,11 @@ int handler_dkg_set_commits(uint8_t p1, buffer_t *cdata)
     zkn_edcurve_t curve;
     if (tEdwards_Curve_alloc_init(&curve, _BABYJUJUB_ID) != 0) goto commits_cleanup;
     zkn_bn_t h;
+    ZKN_NV_STAGE(digest_stage, 32);
     if (zkn_bn_alloc(&h, 32) != 0) goto commits_cleanup;
-    if (Babyfrost_H5(g_dkg.comp, g_dkg.comp_len, curve.order, h) != 0) goto commits_cleanup;
-    if (zkn_bn_export(h, g_dkg.digest, 32) != 0) goto commits_cleanup;
+    if (Babyfrost_H5(DKG_NV(comp), g_dkg.comp_len, curve.order, h) != 0) goto commits_cleanup;
+    if (zkn_bn_export(h, ZKN_NV_DST(DKG_NV(digest), digest_stage), 32) != 0) goto commits_cleanup;
+    ZKN_NV_FLUSH(DKG_NV(digest), digest_stage, 32);
     math_rc = 0;
 
 commits_cleanup:
@@ -365,14 +433,14 @@ commits_cleanup:
     if (math_rc != 0) return io_send_sw(SW_SIGNATURE_FAIL);
 
     g_dkg.state = DKG_COMMITTED;
-    return io_send_response_pointer(g_dkg.digest, 32, SW_OK);
+    return io_send_response_pointer(DKG_NV(digest), 32, SW_OK);
 }
 
 /* AAD = SerializeScalar(id) || commitmentsDigest, both 32-byte little-endian. */
 static void dkg_aad(size_t id, uint8_t *aad64) {
     explicit_bzero(aad64, 64);
     for (size_t k = 0; k < 8; k++) aad64[k] = (uint8_t)((id >> (8 * k)) & 0xFF);
-    for (size_t k = 0; k < 32; k++) aad64[32 + k] = g_dkg.digest[31 - k];  /* BE -> LE */
+    for (size_t k = 0; k < 32; k++) aad64[32 + k] = DKG_NV(digest)[31 - k];  /* BE -> LE */
 }
 
 /* ── 0x63 GET_SHARE ────────────────────────────────────────────── */
@@ -407,7 +475,7 @@ int handler_dkg_get_share(buffer_t *cdata)
         explicit_bzero(share, sizeof(share));
         return io_send_sw(SW_SIGNATURE_FAIL);
     }
-    int rc = zkn_ed25519_ecdh_kdf(sc, g_dkg.hk[k], key);
+    int rc = zkn_ed25519_ecdh_kdf(sc, DKG_NV(hk)[k], key);
     explicit_bzero(sc, sizeof(sc));
     if (rc != 0) {
         explicit_bzero(key, sizeof(key));
@@ -467,11 +535,11 @@ int handler_dkg_put_share(buffer_t *cdata)
      * substitution shows up here. */
     uint8_t hj[64];
     if (zkn_blake2b_512_hash(cj, g_dkg.t * 64, hj) != 0) return io_send_sw(SW_SIGNATURE_FAIL);
-    if (memcmp(hj, g_dkg.hj[k], 32) != 0) return io_send_sw(SW_SIGNATURE_FAIL);
+    if (memcmp(hj, DKG_NV(hj)[k], 32) != 0) return io_send_sw(SW_SIGNATURE_FAIL);
 
     uint8_t sc[32], key[32];
     if (dkg_comm_scalar(g_dkg.account, sc) != 0) return io_send_sw(SW_SIGNATURE_FAIL);
-    int rc = zkn_ed25519_ecdh_kdf(sc, g_dkg.hk[k], key);
+    int rc = zkn_ed25519_ecdh_kdf(sc, DKG_NV(hk)[k], key);
     explicit_bzero(sc, sizeof(sc));
     if (rc != 0) return io_send_sw(SW_SIGNATURE_FAIL);
 
@@ -548,10 +616,10 @@ int handler_dkg_finalize(buffer_t *cdata)
             zkn_edpoint_t acc, pt;
             if (tEdwards_alloc(&curve, &acc) == 0 &&
                 tEdwards_alloc(&curve, &pt) == 0 &&
-                tEdwards_init(&curve, g_dkg.c0[0], g_dkg.c0[0] + 32, &acc) == 0) {
+                tEdwards_init(&curve, DKG_C0(0), DKG_C0(0) + 32, &acc) == 0) {
                 math_rc = 0;
                 for (size_t k = 1; k < g_dkg.ndealers; k++) {
-                    if (tEdwards_init(&curve, g_dkg.c0[k], g_dkg.c0[k] + 32, &pt) != 0 ||
+                    if (tEdwards_init(&curve, DKG_C0(k), DKG_C0(k) + 32, &pt) != 0 ||
                         tEdwards_add(&curve, &acc, &pt, &acc) != 0) {
                         math_rc = -1;
                         break;
@@ -573,7 +641,7 @@ int handler_dkg_finalize(buffer_t *cdata)
     }
 
     memcpy(g_dkg.skshare_div8, new_share, sizeof(new_share));
-    memcpy(g_dkg.A, new_A, sizeof(new_A));
+    ZKN_NV_PUT(DKG_NV(A), new_A, sizeof(new_A));
     explicit_bzero(new_share, sizeof(new_share));
     explicit_bzero(new_A, sizeof(new_A));
 
@@ -584,7 +652,7 @@ int handler_dkg_finalize(buffer_t *cdata)
 
     g_dkg.state = DKG_PROVISIONED;
     explicit_bzero(g_dkg.coeffs, sizeof(g_dkg.coeffs));  /* no longer needed */
-    return io_send_response_pointer(g_dkg.A, 64, SW_OK);
+    return io_send_response_pointer(DKG_NV(A), 64, SW_OK);
 }
 
 /* ── 0x66 ABORT / 0x67 STATUS ──────────────────────────────────── */
@@ -679,9 +747,9 @@ static size_t dkg_backup_aad(uint8_t *out)
     out[o++] = (uint8_t)g_dkg.id;
     out[o++] = (uint8_t)g_dkg.n;
     out[o++] = (uint8_t)g_dkg.t;
-    memcpy(out + o, g_dkg.A, 64); o += 64;
+    memcpy(out + o, DKG_NV(A), 64); o += 64;
     out[o++] = (uint8_t)g_dkg.name_len;
-    memcpy(out + o, g_dkg.name, g_dkg.name_len); o += g_dkg.name_len;
+    memcpy(out + o, DKG_NV(name), g_dkg.name_len); o += g_dkg.name_len;
     return o;
 }
 
@@ -774,13 +842,13 @@ int handler_dkg_restore_share(buffer_t *cdata)
     g_dkg.account = account;
     g_dkg.id = r_id; g_dkg.n = r_n; g_dkg.t = r_t;
     g_dkg.name_len = r_name_len;
-    memcpy(g_dkg.name, aad + 8 + 64 + 1, r_name_len);
+    ZKN_NV_PUT(DKG_NV(name), aad + 8 + 64 + 1, r_name_len);
     memcpy(g_dkg.skshare_div8, share, 32);
-    memcpy(g_dkg.A, r_A, 64);
+    ZKN_NV_PUT(DKG_NV(A), r_A, 64);
     explicit_bzero(share, sizeof share);
     g_dkg.state = DKG_PROVISIONED;
 
-    return io_send_response_pointer(g_dkg.A, 64, SW_OK);
+    return io_send_response_pointer(DKG_NV(A), 64, SW_OK);
 }
 
 #endif // ZKN_FROST

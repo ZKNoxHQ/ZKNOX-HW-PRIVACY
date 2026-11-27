@@ -21,6 +21,7 @@
 #include "zkn_vss.h"
 #include "handler_dkg.h"
 #include "handler_frost_sign.h"
+#include "zkn_nv_scratch.h"
 
 #if defined(ZKN_FROST)
 
@@ -30,6 +31,33 @@
 
 enum { FS_IDLE = 0, FS_NONCED };
 
+/* FS_NV(buf) is the reassembly buffer (public: message and commitment list).
+ * A member of g_fs, except on Nano S where it is a read-only view of the NVRAM
+ * scratch area (see zkn_nv_scratch.h). The nonces stay in RAM everywhere. */
+#if defined(ZKN_CEREMONY_SCRATCH_NVM)
+
+typedef struct {
+    uint8_t buf[FS_BUF];        /* msg || commitment list, reassembled */
+} fs_scratch_t;
+
+const fs_scratch_t N_fs_scratch_real;
+#define FS_NV(field) (((const fs_scratch_t *)PIC(&N_fs_scratch_real))->field)
+
+static struct {
+    uint8_t state;
+    uint8_t nonces[64];         /* d_i || e_i — secret, single-use */
+    size_t  len;
+} g_fs;
+
+void fs_wipe(void)
+{
+    explicit_bzero(&g_fs, sizeof(g_fs));
+    g_fs.state = FS_IDLE;
+    ZKN_NV_ZERO(FS_NV(buf), sizeof(fs_scratch_t));
+}
+
+#else
+
 static struct {
     uint8_t state;
     uint8_t nonces[64];         /* d_i || e_i — secret, single-use */
@@ -37,7 +65,11 @@ static struct {
     size_t  len;
 } g_fs;
 
+#define FS_NV(field) (g_fs.field)
+
 void fs_wipe(void) { explicit_bzero(&g_fs, sizeof(g_fs)); g_fs.state = FS_IDLE; }
+
+#endif
 
 /* ── 0x70 COMMIT ───────────────────────────────────────────────── */
 int handler_frost_hw_commit(buffer_t *cdata)
@@ -86,8 +118,8 @@ int handler_frost_hw_sign(uint8_t p1, buffer_t *cdata)
     if (g_fs.state != FS_NONCED) return io_send_sw(SW_BAD_STATE);
 
     if (p1 == P1_FIRST) g_fs.len = 0;
-    if (g_fs.len + cdata->size > sizeof(g_fs.buf)) return io_send_sw(SW_WRONG_DATA_LENGTH);
-    memcpy(g_fs.buf + g_fs.len, cdata->ptr, cdata->size);
+    if (g_fs.len + cdata->size > sizeof(FS_NV(buf))) return io_send_sw(SW_WRONG_DATA_LENGTH);
+    ZKN_NV_PUT(FS_NV(buf) + g_fs.len, cdata->ptr, cdata->size);
     g_fs.len += cdata->size;
 
     if (p1 != P1_LAST) return io_send_sw(SW_OK);
@@ -105,8 +137,9 @@ int handler_frost_hw_sign(uint8_t p1, buffer_t *cdata)
      * lambdas were derived for. */
     if (nsig != t) { explicit_bzero(sk, 32); return io_send_sw(SW_WRONG_DATA_LENGTH); }
 
-    const uint8_t *msg  = g_fs.buf;
-    uint8_t *list = g_fs.buf + 32;
+    /* zkn_partial_sig takes both as uint8_t * and only reads them. */
+    const uint8_t *msg  = FS_NV(buf);
+    uint8_t *list = (uint8_t *)FS_NV(buf) + 32;
 
     /* Signer ids, read from the list the host sent. lambda is derived from
      * THESE — the host picks the quorum, not the interpolation. */

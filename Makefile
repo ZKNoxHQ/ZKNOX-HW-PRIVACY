@@ -128,10 +128,16 @@ endif
 # The safe development combinations remain expressible:
 #     make MODE=debug FROST=0    debug surface without the ceremony
 #     make MODE=debug FROST=1    debug ceremony / signing tests
-# Nano S has no threshold surface: the DKG transport needs cx_aes_gcm_*,
-# absent from the LNS cxng, and with the ceremony state the statics take
-# 3.5 KB of the 4.6 KB of RAM. Debug builds default to FROST=0 there.
+# Nano S: BACKEND=sw only. On the device (firmware 2.1.0) the cx backend
+# returns a wrong EdDSA signature, with R off the curve, and takes two thirds
+# of the time of the C code; Speculos cannot run it for this model. See
+# DECISIONS.md, ADR-005.
+# FROST=1 stays opt-in there, debug included: the ceremony takes 0.3 KB of RAM
+# out of the stack and 1.8 KB of NVRAM scratch (ADR-003).
 ifeq ($(TARGET_NAME),TARGET_NANOS)
+    ifneq ($(BACKEND),sw)
+        $(error BACKEND=$(BACKEND) is not available on Nano S: it returns wrong signatures on the device, see DECISIONS.md ADR-005)
+    endif
     FROST ?= 0
 endif
 ifeq ($(MODE),debug)
@@ -140,9 +146,6 @@ else
     FROST ?= 0
 endif
 ifeq ($(FROST),1)
-    ifeq ($(TARGET_NAME),TARGET_NANOS)
-        $(error FROST=1 is not available on Nano S: no AES-GCM in the LNS SDK, not enough RAM)
-    endif
     ifeq ($(MODE),prod)
         $(error MODE=prod FROST=1 is disabled: see the BLOCKING list in src/zkn_features.h)
     endif
@@ -207,17 +210,40 @@ VARIANT_PARAM = COIN
 VARIANT_VALUES = BOL
 
 # Use ARM Thumb-2 ASM for zkn_mont256 core functions. The Nano S secure
-# element is ARMv6-M (Thumb-1 only): it takes the C versions instead.
+# element is ARMv6-M (Thumb-1 only): its multiplication is the Thumb-1
+# assembly named further down, the other core functions stay in C.
 ifneq ($(TARGET_NAME),TARGET_NANOS)
 DEFINES += ZKN_MONT256_ASM
 endif
 
 # Nano S: 4.5 KB of RAM for statics and stack together. ZKN_LOW_RAM selects
-# the library's low-RAM variants (2-bit fixed-base window, Poseidon MDS
-# matrix read from flash, phased signing). Same results, more field
-# multiplications.
+# the library's low-RAM variants: signing and the threshold paths run in
+# phases, one function per step. Same results. The fixed-base multiplication
+# and Poseidon are set by the defines listed below.
 ifeq ($(TARGET_NAME),TARGET_NANOS)
 DEFINES += ZKN_LOW_RAM
+# The threshold ceremony on Nano S:
+#   ZKN_AES_GCM_OVER_CX_AES   the LNS cxng has no cx_aes_gcm_*: GCM is built on
+#                             the AES block syscall (src/zknox/src/aes/zkn_gcm_ct.c)
+#   ZKN_CEREMONY_SCRATCH_NVM  public bulk of the ceremony state in an NVRAM
+#                             scratch area (src/handler/zkn_nv_scratch.h)
+#   ZKN_FROST_MAX_SIGNERS     the app signs for a quorum of at most DKG_MAX_T
+# and, for every build:
+#   POSEIDON_MAX_INPUTS       the largest Poseidon arity the app uses (5, the
+#                             EdDSA challenge), which sizes the hash context
+#   ZKN_FIXEDBASE_FLASH_TABLE fixed-base multiplication over the 16-entry
+#                             table read from flash: 64 steps instead of 128,
+#                             no table in RAM (DECISIONS.md, ADR-004)
+#   ZKN_POSEIDON_ARITIES      the Poseidon tables linked for the BN254 field,
+#                             one bit per number of inputs: 1 and 3 (0zk
+#                             address) and 5 (signature). The Bandersnatch
+#                             table (5 inputs) keeps its default. ADR-007
+# The Montgomery multiplication comes from src/zknox/src/zkn_mont/
+# zkn_mont256_armv6m.S, which enables itself on this core
+# (ZKN_MONT256_NO_ASM keeps the C version).
+ZKN_NANOS_DEFINES := POSEIDON_MAX_INPUTS=5 ZKN_FIXEDBASE_FLASH_TABLE ZKN_POSEIDON_ARITIES=0x2A \
+                     ZKN_AES_GCM_OVER_CX_AES ZKN_CEREMONY_SCRATCH_NVM ZKN_FROST_MAX_SIGNERS=3
+DEFINES += $(ZKN_NANOS_DEFINES)
 endif
 
 ########################################
@@ -269,7 +295,7 @@ ifneq ($(TARGET_NAME),TARGET_NANOS)
 CFLAGS  += -DZKN_MONT256_ASM
 endif
 ifeq ($(TARGET_NAME),TARGET_NANOS)
-CFLAGS  += -DZKN_LOW_RAM
+CFLAGS  += -DZKN_LOW_RAM $(addprefix -D,$(ZKN_NANOS_DEFINES))
 endif
 
 # Same belt-and-braces for ZKNOX_DEBUG: inject into CFLAGS directly so

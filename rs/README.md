@@ -54,7 +54,9 @@ hardware and software participants. It needs a device built
 `MODE=debug FROST=1`, unlocked, with the app open, and seeded yellow×12: the
 seed-bound oracles are one reason, and the ceremony's transport-key check is
 the other, the device's seed being the one the suite cannot set. `SEED=other`
-waives all three. Nothing is written to flash: the DKG share lives in RAM.
+waives all three. No secret is written to flash: the DKG share lives in RAM.
+On Nano S the public part of the ceremony state goes through an NVRAM scratch
+area ([DECISIONS.md](../DECISIONS.md), ADR-003).
 
 To drive it yourself:
 
@@ -154,15 +156,34 @@ processes. With `HW_DEVICE=1` one of them is a real Ledger instead
 does: the device deals, receives, finalizes and signs alongside simulated
 peers, and the same checks apply to the result.
 
-Two ceremonies run the same code path:
+The seat can also go to a process: `HW_PARTICIPANT_BIN` names a program that
+speaks the simulator's protocol, and the harness spawns it for that
+participant. `tools/speculos_sim_bridge.py` forwards to a Speculos instance,
+which is how the Nano S build runs a ceremony under emulation:
+
+```sh
+speculos --model nanos --display headless --apdu-port 9999 \
+    --seed "yellow yellow yellow yellow yellow yellow yellow yellow yellow yellow yellow yellow" \
+    ../build/nanos/sw/debug/frost-1/bin/app.elf &
+HW_PARTICIPANT_BIN=$PWD/../tools/speculos_sim_bridge.py \
+    cargo test -p zknox-hw-tests --test ceremony -- --test-threads=1
+```
+
+Speculos 0.25.5 is the last release with the Nano S model. With `STACK_ELF`
+set to the same ELF, the bridge also reports the stack the device used for
+each command.
+
+Three ceremonies run the same code path:
 
 | test | participants | drawn |
 |---|---|---|
 | `a_ceremony_on_the_canonical_seed_signs_and_verifies` | 2-of-3, all on mnemonic "yellow"×12 | the message |
+| `a_ceremony_at_the_firmware_limits_signs_and_verifies` | 3-of-5, all on mnemonic "yellow"×12, ceremony name of 32 bytes | the message |
 | `a_ceremony_on_random_per_participant_seeds_signs_and_verifies` | t-of-n, one fresh 64-byte seed per participant | n (3..5), t (2..3), the seeds, the quorum, the ceremony name, the message |
 
 The first is the shape the device run reproduces with hardware in it. The
-second is pure software — a physical Ledger cannot be handed a seed — and
+second fills every buffer of the two handlers and can seat a device too. The
+third is pure software — a physical Ledger cannot be handed a seed — and
 every draw comes from the OS CSPRNG, printed so a failing run can be replayed
 with the same `SIM_SEED`s.
 

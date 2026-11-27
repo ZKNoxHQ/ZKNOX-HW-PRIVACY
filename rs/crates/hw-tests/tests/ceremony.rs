@@ -171,12 +171,25 @@ fn hw_participant_id() -> u8 {
         .unwrap_or(1)
 }
 
+/// A process that takes the device's seat in place of the USB link:
+/// `HW_PARTICIPANT_BIN` names a program speaking the simulator's protocol.
+/// `tools/speculos_sim_bridge.py` is one, and puts an emulated device (the
+/// Nano S build, which no simulator process stands for) in a ceremony. Its
+/// seed is whatever that device holds, as with a physical one.
+fn hw_participant_bin() -> Option<String> {
+    std::env::var("HW_PARTICIPANT_BIN")
+        .ok()
+        .filter(|v| !v.is_empty())
+}
+
 /// Starts participant `id`, or `None` when the simulator has not been built.
 fn boot(setup: &Setup, index: usize) -> Option<Device> {
     let id = index as u8 + 1;
     let seeding = &setup.seeds[index];
-    let device_plays_this_one =
-        setup.allow_device && hw_device_requested() && id == hw_participant_id();
+    let stand_in = hw_participant_bin();
+    let device_plays_this_one = setup.allow_device
+        && (hw_device_requested() || stand_in.is_some())
+        && id == hw_participant_id();
 
     let transport = if device_plays_this_one {
         assert!(
@@ -184,9 +197,16 @@ fn boot(setup: &Setup, index: usize) -> Option<Device> {
             "participant {id} is the physical Ledger, whose seed cannot be chosen: \
              only a ceremony on the canonical seed can host one"
         );
-        // HW_DEVICE names a backend, so a device that does not answer is a
-        // failure, not a skip — same rule as the single-device suites.
-        open_hid().unwrap_or_else(|e| panic!("participant {id} is the Ledger, and: {e}"))
+        match stand_in {
+            // Same rule either way: a named backend that does not answer is a
+            // failure, not a skip.
+            Some(bin) => spawn_sim_with_env(&bin, &[])
+                .unwrap_or_else(|e| panic!("participant {id} is {bin}, and: {e}")),
+            // HW_DEVICE names a backend, so a device that does not answer is a
+            // failure, not a skip — same rule as the single-device suites.
+            None => open_hid()
+                .unwrap_or_else(|e| panic!("participant {id} is the Ledger, and: {e}")),
+        }
     } else {
         let binary = default_sim_binary();
         if !binary.exists() {
@@ -668,6 +688,32 @@ fn a_ceremony_on_the_canonical_seed_signs_and_verifies() {
         name: "rs-e2e".to_string(),
         seeds: vec![Seeding::Default; 3],
         quorum: vec![0, 1],
+        message,
+        allow_device: true,
+    });
+}
+
+/// 3-of-5 on the canonical seed, the largest shape the firmware accepts:
+/// `DKG_MAX_N` dealers, `DKG_MAX_T` coefficients and signers, a ceremony name
+/// of `VSS_MAX_NAME_LEN` bytes. Every buffer of the two handlers is full.
+///
+/// The random ceremony below reaches this shape now and then; this one does
+/// every time, and can seat a device. The quorum is drawn around the device's
+/// seat, so that the device signs whichever seat it takes.
+#[test]
+fn a_ceremony_at_the_firmware_limits_signs_and_verifies() {
+    let message = Curve::new().random_scalar(&mut OsRng, true);
+    let seat = (hw_participant_id() as usize).clamp(1, DKG_MAX_N) - 1;
+    let quorum: BTreeSet<usize> = [seat, (seat + 2) % DKG_MAX_N, (seat + 4) % DKG_MAX_N]
+        .into_iter()
+        .collect();
+    run(&Setup {
+        label: "largest ceremony (3-of-5, yellow×12)".to_string(),
+        t: DKG_MAX_T,
+        account: ACCOUNT,
+        name: "rs-e2e-largest-shape-0123456789a".to_string(),
+        seeds: vec![Seeding::Default; DKG_MAX_N],
+        quorum: quorum.into_iter().collect(),
         message,
         allow_device: true,
     });
