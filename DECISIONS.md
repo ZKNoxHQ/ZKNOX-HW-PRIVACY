@@ -96,7 +96,18 @@ and that is the same on every target.
   Rust suites `dkg` and `frost_hw`, the three `sign` tests that need no
   screen, the three ceremonies with the emulated device as a participant,
   and two 0zk addresses equal to those of the image of before.
-- Not run: a Nano S Plus device. Not built: Apex.
+- Run on devices, with `sw` debug images built from this tree (`FROST=1`):
+  the four device suites of `rs/`, 23 tests. `sign` computes three signatures
+  on the device; in `ceremony` the device is a participant of a 3-of-5 and
+  of a 2-of-3.
+
+  | Device | `sign` | `dkg` | `frost_hw` | `ceremony` | Total | Per signature |
+  |---|---|---|---|---|---|---|
+  | Nano S | 11.76 s | 9.66 s | 10.44 s | 97.33 s | 129.2 s | 3.92 s |
+  | Nano S Plus | 1.22 s | 1.66 s | 1.44 s | 12.49 s | 16.8 s | 0.41 s |
+
+  The Nano S Plus image is the one that lost the four tables.
+- Not built: Apex.
 - The versioned binaries of `build/prod` and `build/dev` are not rebuilt by
   this change.
 

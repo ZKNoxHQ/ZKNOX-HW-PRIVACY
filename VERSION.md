@@ -33,7 +33,10 @@ Date: 2026-11-27
   simulator self-test, the 32 tests of the Rust suite on the simulator, and
   on the emulated Nano S Plus with the new `sw` image the suites `dkg`,
   `frost_hw`, `sign` without screens, the ceremonies and the 0zk address.
-  Not run on a Nano S Plus device.
+- On devices, with `sw` debug images built from this tree (`FROST=1`), the
+  four device suites of `rs/` pass: 129.2 s on a Nano S, 3.92 s per
+  signature, and 16.8 s on a Nano S Plus, 0.41 s per signature. The table
+  is in ADR-012.
 
 ### cx backend on Nano S: the cause of the wrong signatures
 

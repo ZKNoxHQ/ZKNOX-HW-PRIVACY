@@ -223,7 +223,9 @@ the public key derivation (ADR-010): the key is multiplied as
 `s + lambda * l`, with a fresh 32-bit `lambda`, so that the entries read
 from the flash table differ from one signature to the next. Measured with
 both: 3.9 s per signature.
-The DKG and FROST commands have been validated on the emulated device only.
+The four device suites of `rs/` (`sign`, `dkg`, `frost_hw`, `ceremony`) pass
+on a Nano S in 129 s, the two ceremonies taking 97 s of it. On a Nano S Plus
+they take 16.8 s, at 0.41 s per signature.
 
 Stack left on the emulated device at the deepest command: 888 bytes of 3184
 without FROST, 288 of 2904 with it. Three scripts check the budget:
