@@ -208,55 +208,41 @@ PATH_APP_LOAD_PARAMS = "44'/1984'" "420'/1984'" "421'/1984'"
 VARIANT_PARAM = COIN
 VARIANT_VALUES = BOL
 
-# Use ARM Thumb-2 ASM for zkn_mont256 core functions. The Nano S secure
-# element is ARMv6-M (Thumb-1 only): its multiplication is the Thumb-1
-# assembly named further down, the other core functions stay in C.
-ifneq ($(TARGET_NAME),TARGET_NANOS)
+# Thumb-2 assembly for the zkn_mont256 core functions. The library drops the
+# request on a core without Thumb-2 (Nano S, ARMv6-M): there the
+# multiplication is the Thumb-1 assembly of src/zknox/src/zkn_mont/
+# zkn_mont256_armv6m.S, which enables itself, and the other core functions
+# stay in C (ZKN_MONT256_NO_ASM keeps the C multiplication,
+# ZKN_MONT256_NO_FIELD_PATHS its path for the two curve fields; DECISIONS.md,
+# ADR-009).
 DEFINES += ZKN_MONT256_ASM
-endif
 
-# Nano S: 4.5 KB of RAM for statics and stack together. ZKN_LOW_RAM selects
-# the library's low-RAM variants: signing and the threshold paths run in
-# phases, one function per step. Same results. The fixed-base multiplication
-# and Poseidon are set by the defines listed below.
+# What the app uses of the library, on every target: src/zkn_app_config.h,
+# which the library includes before its own defaults
+# (src/zknox/src/common/zkn_config.h). It holds the Poseidon tables linked for
+# the BN254 field (1, 3 and 5 inputs) and what ZKN_LOW_RAM means for the app.
+ZKN_APP_CONFIG := ZKN_CONFIG_FILE=\"zkn_app_config.h\"
+DEFINES += $(ZKN_APP_CONFIG)
+
+# Nano S: one switch. 4.6 KB of RAM for statics and stack together.
+# ZKN_LOW_RAM selects the low-RAM variants of the library (signing and the
+# threshold paths run in phases, one function per step, same results), and
+# the rest follows from it in two headers:
+#   src/zknox/src/common/zkn_config.h
+#       with BACKEND=sw, the fixed-base multiplication over the 16-entry
+#       table read from flash (64 steps, no table in RAM; ADR-004) and the
+#       blinded key scalar (72 steps for the public key; ADR-010). With
+#       BACKEND=cx the fixed-base multiplication is the one of ZKN_LOW_RAM
+#       alone: two windows, a randomized table in RAM.
+#   src/zkn_app_config.h
+#       the Poseidon context sized for 5 inputs, a quorum of at most 3
+#       signers, the public bulk of the ceremony state in NVRAM (ADR-003).
+# What depends on the chip or on its SDK follows the target with no switch:
+# the Thumb-1 multiplication, GCM built on the AES block syscall (the LNS cxng
+# has no cx_aes_gcm_*) and, with BACKEND=cx, the two work-arounds of the
+# coprocessor (ADR-011). DECISIONS.md, ADR-012.
 ifeq ($(TARGET_NAME),TARGET_NANOS)
 DEFINES += ZKN_LOW_RAM
-# The threshold ceremony on Nano S:
-#   ZKN_AES_GCM_OVER_CX_AES   the LNS cxng has no cx_aes_gcm_*: GCM is built on
-#                             the AES block syscall (src/zknox/src/aes/zkn_gcm_ct.c)
-#   ZKN_CEREMONY_SCRATCH_NVM  public bulk of the ceremony state in an NVRAM
-#                             scratch area (src/handler/zkn_nv_scratch.h)
-#   ZKN_FROST_MAX_SIGNERS     the app signs for a quorum of at most DKG_MAX_T
-# for every build:
-#   POSEIDON_MAX_INPUTS       the largest Poseidon arity the app uses (5, the
-#                             EdDSA challenge), which sizes the hash context
-#   ZKN_POSEIDON_ARITIES      the Poseidon tables linked for the BN254 field,
-#                             one bit per number of inputs: 1 and 3 (0zk
-#                             address) and 5 (signature). The Bandersnatch
-#                             table (5 inputs) keeps its default. ADR-007
-# and, with BACKEND=sw:
-#   ZKN_FIXEDBASE_FLASH_TABLE fixed-base multiplication over the 16-entry
-#                             table read from flash: 64 steps instead of 128,
-#                             no table in RAM (DECISIONS.md, ADR-004)
-#   ZKN_FIXEDBASE_SCALAR_BLINDING  the public key derivation multiplies by the
-#                             private scalar plus a random multiple of the
-#                             subgroup order, 72 steps instead of 64
-#                             (DECISIONS.md, ADR-010)
-# The Montgomery multiplication comes from src/zknox/src/zkn_mont/
-# zkn_mont256_armv6m.S, which enables itself on this core
-# (ZKN_MONT256_NO_ASM keeps the C version). For the two curve fields it
-# takes the path written for the 32-cycle multiplier of this chip:
-# 192 MULS per product instead of 520, the reduction by shifts and additions
-# (ZKN_MONT256_NO_FIELD_PATHS leaves that path out; DECISIONS.md, ADR-009).
-ZKN_NANOS_DEFINES := POSEIDON_MAX_INPUTS=5 ZKN_POSEIDON_ARITIES=0x2A \
-                     ZKN_AES_GCM_OVER_CX_AES ZKN_CEREMONY_SCRATCH_NVM ZKN_FROST_MAX_SIGNERS=3
-# The flash table and the blinded scalar exist for the software bignums only.
-# With BACKEND=cx the fixed-base multiplication is the one of ZKN_LOW_RAM:
-# two windows, a randomized table in RAM.
-ifeq ($(BACKEND),sw)
-ZKN_NANOS_DEFINES += ZKN_FIXEDBASE_FLASH_TABLE ZKN_FIXEDBASE_SCALAR_BLINDING
-endif
-DEFINES += $(ZKN_NANOS_DEFINES)
 endif
 
 ########################################
@@ -304,11 +290,9 @@ ifeq ($(BACKEND),cx)
 else
     CFLAGS  += -DZKN_BN_BACKEND_SW
 endif
-ifneq ($(TARGET_NAME),TARGET_NANOS)
-CFLAGS  += -DZKN_MONT256_ASM
-endif
+CFLAGS  += -DZKN_MONT256_ASM -D$(ZKN_APP_CONFIG)
 ifeq ($(TARGET_NAME),TARGET_NANOS)
-CFLAGS  += -DZKN_LOW_RAM $(addprefix -D,$(ZKN_NANOS_DEFINES))
+CFLAGS  += -DZKN_LOW_RAM
 endif
 
 # Same belt-and-braces for ZKNOX_DEBUG: inject into CFLAGS directly so

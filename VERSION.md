@@ -4,6 +4,37 @@
 
 Date: 2026-11-27
 
+### One switch for the Nano S port: `ZKN_LOW_RAM`
+
+- The Makefile sets `ZKN_LOW_RAM` on Nano S and nothing else for that
+  target. The seven other defines it listed there follow from it, or from
+  the target. See [DECISIONS.md](DECISIONS.md), ADR-012.
+- `src/zknox/src/common/zkn_config.h` (new) resolves the options of the
+  library. With `ZKN_LOW_RAM` and `BACKEND=sw` it brings the fixed-base table
+  read from flash and the blinded key scalar. On Nano S it selects GCM over
+  the AES block syscall from the target the SDK names.
+- `src/zkn_app_config.h` (new) states what the app uses of the library, and
+  the library includes it before its defaults (`ZKN_CONFIG_FILE`). Under
+  `ZKN_LOW_RAM`: Poseidon context for 5 inputs, quorum of 3, public ceremony
+  state in NVRAM. On every target: the Poseidon tables for 1, 3 and 5 inputs
+  over BN254.
+- `ZKN_MONT256_ASM` is set for every target again. The library drops it on a
+  core without Thumb-2.
+- The simulator is built with the file of the app, sources and library.
+- Nano S: the five images are byte-identical (`sw` prod, `sw` debug with and
+  without `FROST=1`, `cx` prod, `cx` debug with `FROST=1`).
+- Other targets, `cx`: byte-identical (Nano S Plus prod and debug, Nano X,
+  Stax and Flex prod).
+- Other targets, `sw`: 18432 bytes smaller, the tables for 2, 4, 6 and 7
+  inputs being no longer linked. Nano S Plus prod goes from 74847 to 56415
+  bytes of code and data. Without the mask the Nano S Plus `sw` images are
+  byte-identical to before.
+- Checked: the 29 suites of the library in six configurations, the
+  simulator self-test, the 32 tests of the Rust suite on the simulator, and
+  on the emulated Nano S Plus with the new `sw` image the suites `dkg`,
+  `frost_hw`, `sign` without screens, the ceremonies and the 0zk address.
+  Not run on a Nano S Plus device.
+
 ### cx backend on Nano S: the cause of the wrong signatures
 
 - Found on the device: on Nano S, firmware 2.1.0, the multiplications of the
@@ -49,9 +80,10 @@ Date: 2026-11-27
   21.3 s, and the flash table and the blinded key scalar exist for it only.
   The cx image is 36887 bytes of code in `MODE=prod`; a signature uses 54 of
   the 64 bignums of the coprocessor, a threshold ceremony 57.
-- With cx on a device, only the self-test has run. The production commands
-  and the threshold ceremony pass on the host model with the faults and the
-  pool of the device.
+- With cx on a device: the self-test, then the four device suites of `rs/`
+  (`sign`, `dkg`, `frost_hw`, `ceremony`) on a debug image with `FROST=1`,
+  which passed. The same commands pass on the host model with the faults and
+  the pool of the device.
 - A key that signed with a cx image on Nano S and with a correct image is
   exposed: same nonce, another challenge. ADR-011 has the detail.
 - `zkn_bn_ledger.h` declared `zkn_montgomery_export` with a pointer for the

@@ -182,10 +182,14 @@ make -j BOLOS_SDK=$NANOS_SDK MODE=debug FROST=1      # DKG and FROST
 ```
 
 It has 4.6 KB of RAM and an ARMv6-M core, so the Makefile defines
-`ZKN_LOW_RAM` for it: same keys and signatures, smaller stack. With `FROST=1`
-the public part of the ceremony state (commitments, hashes, transport keys,
-the signing request) goes to an NVRAM scratch area and the secrets stay in
-RAM; the commands and their wire format are those of the other devices, up
+`ZKN_LOW_RAM` for it: same keys and signatures, smaller stack. That is the
+one switch of the port. What it brings is written in two headers,
+[src/zknox/src/common/zkn_config.h](src/zknox/src/common/zkn_config.h) for
+the library and [src/zkn_app_config.h](src/zkn_app_config.h) for the app,
+and what depends on the chip or on its SDK follows the target (ADR-012).
+With `FROST=1` the public part of the ceremony state (commitments, hashes,
+transport keys, the signing request) goes to an NVRAM scratch area and the
+secrets stay in RAM; the commands and their wire format are those of the other devices, up
 to 3-of-5. Details in [DECISIONS.md](DECISIONS.md), ADR-001 and ADR-003.
 
 `BACKEND=sw` is the default there and the faster backend. `BACKEND=cx` is
@@ -198,8 +202,8 @@ return a wrong value when the result bignum is also an operand, and the
 library converts to Montgomery form in place; and it leaves its Montgomery
 products unreduced, where the library compared some of them as bignums. The
 library works around both on this target and both curves sign correctly on
-the device (ADR-011). Of the cx build only a self-test has run on a device
-so far.
+the device (ADR-011): a self-test of the arithmetic, then the four device
+suites of `rs/`.
 
 Speed, on a Nano S with firmware 2.1.0: 28 s per signature with the C code of
 the first port. Two changes address it (ADR-004). The field multiplication is
@@ -355,6 +359,7 @@ commitments, and the aggregate under the circomlib equation.
 src/
 ├── app_main.c            APDU loop; any uncaught BOLOS exception exits fail-closed
 ├── constants.h  sw.h  types.h  globals.h  zkn_features.h
+├── zkn_app_config.h      what the app uses of ZKNOX-LibC, and what ZKN_LOW_RAM means for it
 ├── apdu/dispatcher.c     INS → handler, with RFU validation per instruction
 ├── handler/
 │   ├── handler_keys.c        signing pubkey derivation

@@ -26,6 +26,9 @@
 #if defined(ZKN_FROST)
 
 #define FS_MAX_SIGNERS  3       /* mirrors DKG_MAX_T: a quorum is t signers */
+#if FS_MAX_SIGNERS > ZKN_FROST_MAX_SIGNERS
+#error "FS_MAX_SIGNERS is above ZKN_FROST_MAX_SIGNERS, the quorum the library is built for (src/zkn_app_config.h)"
+#endif
 #define FS_REC          160     /* id(32) || D.x||D.y || E.x||E.y, all BE */
 #define FS_BUF          (32 + FS_MAX_SIGNERS * FS_REC)
 

@@ -10,8 +10,8 @@
  * macros below then expand to the plain statements the handlers always had
  * (memcpy, in-place output), so the generated code does not change.
  *
- * ZKN_CEREMONY_SCRATCH_NVM (Nano S, set by the Makefile): in an NVRAM scratch
- * area. The Nano S has 4.6 KB of RAM for statics and stack together; the
+ * ZKN_CEREMONY_SCRATCH_NVM (Nano S: it comes with ZKN_LOW_RAM, see
+ * src/zkn_app_config.h): in an NVRAM scratch area. The Nano S has 4.6 KB of RAM for statics and stack together; the
  * commitments, their hashes, the comm public keys, the digest input and the
  * reassembled FROST request are 1.8 KB of it. All of that is public data that
  * the host sent or will receive. Secrets (polynomial coefficients, share
@@ -28,6 +28,8 @@
  *   ZKN_NV_DST(dst, stage)        where a callee must write: stage, or dst in RAM mode
  *   ZKN_NV_FLUSH(dst, stage, len) commit the staging buffer (nothing in RAM mode)
  */
+
+#include "zkn_config.h" /* the options of the build, ZKN_CEREMONY_SCRATCH_NVM among them */
 
 #if defined(ZKN_CEREMONY_SCRATCH_NVM)
 

@@ -2,6 +2,116 @@
 
 Architecture decisions for ZKNOX-HW-PRIVACY, newest first.
 
+## ADR-012: one switch for the Nano S port, `ZKN_LOW_RAM`
+
+Date: 2026-11-27
+
+### Context
+
+The Nano S port was a list in the Makefile. Under `TARGET_NANOS` it set
+`ZKN_LOW_RAM` and seven more defines: `POSEIDON_MAX_INPUTS=5`,
+`ZKN_POSEIDON_ARITIES=0x2A`, `ZKN_AES_GCM_OVER_CX_AES`,
+`ZKN_CEREMONY_SCRATCH_NVM`, `ZKN_FROST_MAX_SIGNERS=3` and, with `BACKEND=sw`,
+`ZKN_FIXEDBASE_FLASH_TABLE` and `ZKN_FIXEDBASE_SCALAR_BLINDING`. It repeated
+them in `CFLAGS` and kept `ZKN_MONT256_ASM` for the other targets only. The
+simulator had none of them.
+
+The branch is to be merged into `main`. For that the port has to be one
+switch, and a build without the switch has to be the build of before.
+
+The defines are of three kinds:
+
+- what little RAM asks of the library: the low-RAM variants and, with the
+  software bignums, the flash table and the blinded scalar;
+- what little RAM asks of the app: a Poseidon context for 5 inputs, a quorum
+  of 3, the public ceremony state in NVRAM;
+- what the chip or its SDK asks, whatever the RAM: GCM over the AES block,
+  the work-arounds of the coprocessor, the Thumb-1 multiplication in place
+  of the Thumb-2 assembly.
+
+The arity mask is of none of them: it says which hashes the app computes,
+and that is the same on every target.
+
+### Decision
+
+1. The Makefile sets `ZKN_LOW_RAM` on Nano S and no other code option for
+   that target. `FROST ?= 0` there is a default of the build.
+2. The library resolves its options in one header,
+   `src/zknox/src/common/zkn_config.h`, which `zkn_bn.h` includes first. With
+   `ZKN_LOW_RAM` and the software bignums it defines
+   `ZKN_FIXEDBASE_FLASH_TABLE` and `ZKN_FIXEDBASE_SCALAR_BLINDING`. Both stay
+   options of their own, with `ZKN_FIXEDBASE_NO_FLASH_TABLE` and
+   `ZKN_FIXEDBASE_NO_SCALAR_BLINDING` to take them out (ZKNOX-LibC,
+   DECISIONS.md, ADR-003).
+3. The app states what it uses of the library in `src/zkn_app_config.h`. The
+   Makefile names that file with `ZKN_CONFIG_FILE` and `zkn_config.h`
+   includes it before the defaults of the library, so the sources of the app
+   and those of the library read the same values. It holds the arity mask,
+   for every target, and under `ZKN_LOW_RAM`: `POSEIDON_MAX_INPUTS` 5,
+   `ZKN_FROST_MAX_SIGNERS` 3 and `ZKN_CEREMONY_SCRATCH_NVM`.
+   `handler_frost_sign.c` does not compile if its `FS_MAX_SIGNERS` is above
+   `ZKN_FROST_MAX_SIGNERS`.
+4. What depends on the chip or on the SDK follows the target. In a device
+   build `zkn_config.h` reads `bolos_target.h` and defines
+   `ZKN_AES_GCM_OVER_CX_AES` for `TARGET_NANOS`. `zkn_bn.h` already set the
+   two work-arounds of the coprocessor that way (ADR-011), and the Thumb-1
+   multiplication already enabled itself on an ARMv6-M core (ADR-004).
+   `zkn_mont256.c` now drops `ZKN_MONT256_ASM` on a core without Thumb-2, so
+   the Makefile sets it for every target, as `main` does.
+5. The arity mask applies to every target. The app hashes over BN254 with 1,
+   3 and 5 inputs; the tables for 2, 4, 6 and 7 inputs are linked nowhere.
+6. The simulator names the same file to the app sources it compiles and to
+   the library it builds.
+
+### Consequences
+
+- Nano S: the five images are byte-identical to those of ADR-011, `sw` prod,
+  `sw` debug with `FROST=0` and `FROST=1`, `cx` prod and `cx` debug with
+  `FROST=1`. Nothing to run again on the device.
+- `cx` images of the other targets: byte-identical. Nano S Plus prod and
+  debug, Nano X, Stax and Flex prod.
+- `sw` images of the other targets: 18432 bytes smaller, the four tables.
+  Code and data, in bytes:
+
+  | Image | Before | Now |
+  |---|---|---|
+  | Nano S Plus `sw` prod | 74847 | 56415 |
+  | Nano S Plus `sw` debug, `FROST=1` | 89183 | 70751 |
+  | Nano X `sw` prod | 74591 | 56159 |
+  | Stax `sw` prod | 97991 | 79559 |
+  | Flex `sw` prod | 98033 | 79601 |
+
+  With the mask taken out of `src/zkn_app_config.h` the two Nano S Plus `sw`
+  images are byte-identical to before: the mask is their only change.
+- On those targets the library now refuses a Poseidon over BN254 with 2, 4,
+  6 or 7 inputs. No command of the app computes one.
+- Against `main`: the Nano S Plus `sw` prod image is 48223 bytes there. This
+  branch was at 74847 and is at 56415.
+- The library: its 40 objects are byte-identical to those of the options it
+  replaces in five configurations, and its 29 test suites pass in six
+  (ZKNOX-LibC, ADR-003).
+- Checked with the simulator, built with the file of the app: its self-test
+  in both modes and the 32 tests of the Rust suite.
+- Checked on the emulated Nano S Plus, `sw` debug image with the mask: the
+  Rust suites `dkg` and `frost_hw`, the three `sign` tests that need no
+  screen, the three ceremonies with the emulated device as a participant,
+  and two 0zk addresses equal to those of the image of before.
+- Not run: a Nano S Plus device. Not built: Apex.
+- The versioned binaries of `build/prod` and `build/dev` are not rebuilt by
+  this change.
+
+### Alternatives considered
+
+- The list kept in the Makefile behind one make variable. It stays a list to
+  keep in step in three build systems, and the simulator did not have it.
+- The sizes of the app (5 inputs, quorum of 3) as defaults of the library
+  under `ZKN_LOW_RAM`. They are numbers of this app; the tests of the library
+  hash with 6 and 7 inputs in low-RAM mode.
+- A configuration file found by name with `__has_include`. A missing include
+  path would build the defaults without a word.
+- The mask on Nano S only. The other targets would keep 18 KB of tables that
+  no command reaches.
+
 ## ADR-011: the cx backend is allowed on Nano S: no aliased result, field elements compared as residues
 
 Date: 2026-11-27
@@ -171,11 +281,12 @@ a signature has 54 alive at its deepest point and a threshold ceremony 57:
 with a pool of 56 the ceremony fails.
 
 What has run with it on a device: the self-test, that is the curve
-arithmetic, the hashes and eight signatures through SIGN_WITH_PRIVKEY. What
-has not: the production commands with their screens, the DKG and the
-threshold signature. Those pass on the host model given the faults and the
-pool of the device, the Rust suite and the ceremonies with the model in
-seats 1, 3 and 5. The stack figures are static: no emulator runs this build.
+arithmetic, the hashes and eight signatures through SIGN_WITH_PRIVKEY, and
+then the four device suites of `rs/` (`sign`, `dkg`, `frost_hw`, `ceremony`)
+on a debug image with `FROST=1`, which passed. The same commands pass on the
+host model given the faults and the pool of the device, the Rust suite and
+the ceremonies with the model in seats 1, 3 and 5. The stack figures are
+static: no emulator runs this build.
 
 ### Consequences
 
