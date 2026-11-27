@@ -200,11 +200,17 @@ the compiled C did not have on this core. The fixed-base multiplication reads
 its 16-entry table from flash and no longer keeps a randomized copy of a
 table in RAM, which halves its steps and removes the per-entry randomization;
 ADR-004 states the side-channel cost and how to go back. Measured with these
-two: 12.6 s per signature. Two more changes have only run on the emulated
-device so far. The signer derives the public key itself, once, where the
-handler and the signer each derived it (ADR-006). Poseidon comes from the
-library's tables, in Montgomery form in flash, with no round-constant
-generator at run time (ADR-007). 6.2 s per signature are expected with both.
+two: 12.6 s per signature. Then the signer derives the public key itself,
+once, where the handler and the signer each derived it (ADR-006), and
+Poseidon comes from the library's tables, in Montgomery form in flash, with
+no round-constant generator at run time (ADR-007). Measured with both: 6.2 s
+per signature. The last change has only run on the emulated device so far:
+for the two fields the curves are defined over, the multiplication reduces
+with shifts and additions and takes three `MULS` per product, 192 instead of
+520 (ADR-009). 3.7 s per signature are expected with it, and 3.8 s with the
+private scalar blinded in the public key derivation (ADR-010): the key is
+multiplied as `s + lambda * l`, with a fresh 32-bit `lambda`, so that the
+entries read from the flash table differ from one signature to the next.
 The DKG and FROST commands have been validated on the emulated device only.
 
 Stack left on the emulated device at the deepest command: 888 bytes of 3184

@@ -234,14 +234,22 @@ DEFINES += ZKN_LOW_RAM
 #   ZKN_FIXEDBASE_FLASH_TABLE fixed-base multiplication over the 16-entry
 #                             table read from flash: 64 steps instead of 128,
 #                             no table in RAM (DECISIONS.md, ADR-004)
+#   ZKN_FIXEDBASE_SCALAR_BLINDING  the public key derivation multiplies by the
+#                             private scalar plus a random multiple of the
+#                             subgroup order, 72 steps instead of 64
+#                             (DECISIONS.md, ADR-010)
 #   ZKN_POSEIDON_ARITIES      the Poseidon tables linked for the BN254 field,
 #                             one bit per number of inputs: 1 and 3 (0zk
 #                             address) and 5 (signature). The Bandersnatch
 #                             table (5 inputs) keeps its default. ADR-007
 # The Montgomery multiplication comes from src/zknox/src/zkn_mont/
 # zkn_mont256_armv6m.S, which enables itself on this core
-# (ZKN_MONT256_NO_ASM keeps the C version).
+# (ZKN_MONT256_NO_ASM keeps the C version). For the two curve fields it
+# takes the path written for the 32-cycle multiplier of this chip:
+# 192 MULS per product instead of 520, the reduction by shifts and additions
+# (ZKN_MONT256_NO_FIELD_PATHS leaves that path out; DECISIONS.md, ADR-009).
 ZKN_NANOS_DEFINES := POSEIDON_MAX_INPUTS=5 ZKN_FIXEDBASE_FLASH_TABLE ZKN_POSEIDON_ARITIES=0x2A \
+                     ZKN_FIXEDBASE_SCALAR_BLINDING \
                      ZKN_AES_GCM_OVER_CX_AES ZKN_CEREMONY_SCRATCH_NVM ZKN_FROST_MAX_SIGNERS=3
 DEFINES += $(ZKN_NANOS_DEFINES)
 endif

@@ -2,6 +2,180 @@
 
 Architecture decisions for ZKNOX-HW-PRIVACY, newest first.
 
+## ADR-010: on Nano S the private scalar is blinded in the public key derivation
+
+Date: 2026-11-27
+
+### Context
+
+Since ADR-004 the fixed-base multiplication of Nano S reads its table from
+flash. The point being built is randomized, the table is not: the entry
+selected at each step is a known constant, and its bytes go through the
+selection and the first products of the addition unmasked. The other devices
+randomize every entry, in 1.5 KB of RAM that this one does not have.
+
+Since ADR-006 the signer derives the public key itself, `A = [s]B`, at every
+signature. `s` never changes, so the same 64 entries are selected in the
+same order every time: whatever a trace exposes about them can be averaged
+over as many signatures as an attacker collects. The other fixed-base
+scalars are not in that position. The FROST nonces and the DKG coefficients
+are used once, and the EdDSA nonce changes with the message.
+
+### Decision
+
+`zkn_prv2pub` multiplies the base point by `s + lambda * l`, where `l` is
+the order of the base point and `lambda` is 32 random bits drawn at each
+call. The result is the same point.
+
+- The blinded scalar has up to 288 bits. The comb keeps its four windows,
+  72 bits each instead of 64: 72 steps, and a second pair of 16-entry tables
+  per curve whose points are 2^72 apart.
+- The tables come from `tools/gen_fixedbase_tables.py`. The 64-bit tables of
+  the library were committed without their generator; the script rebuilds
+  them first, with curve arithmetic of its own, and stops if they differ
+  from the committed bytes.
+- `s + lambda * l` is computed on 16-bit digits, so that each product fits
+  32 bits and is one `MULS`. A 64-bit product would call `__aeabi_lmul`,
+  which is not constant time on this core (ADR-004).
+- Only the key derivation takes this path. The nonce multiplications keep
+  their 64 steps.
+
+`ZKN_FIXEDBASE_SCALAR_BLINDING` selects it; the Makefile defines it for
+`TARGET_NANOS`. It needs the flash table and the software bignums.
+
+### Consequences
+
+- Same keys and signatures. `tests/test_fixedbase_blind.c` compares the
+  blinded multiplication with the plain one on 597 products per curve; the
+  library's tests pass in six configurations, the two with the blinding
+  among them; the JavaScript and Rust suites, the ceremonies and the
+  production commands pass on the emulated Nano S.
+- One signature: 6555 Montgomery products instead of 6391, 83.6 M cycles
+  instead of 81.5 M, 3.8 s expected on the device, 3.7 s on Bandersnatch. Not
+  measured yet. Ten calls to the random generator instead of eight.
+- Flash: 2432 bytes more, 2048 of them tables: 52567 bytes of code in
+  `MODE=prod`, 70935 in `MODE=debug FROST=1`. The stack peaks measured on
+  the emulated device do not move: 2296 of 3184 in production, 2616 of 2904
+  with `FROST=1`.
+- Two signatures select the same sequence of entries when they draw the same
+  `lambda`: once in 2^32.
+- What it does not do. A single trace still carries its own scalar: whoever
+  reads the 288 selections of one multiplication has `s + lambda * l`, and
+  its remainder modulo `l` is `s`. And the EdDSA nonce is not blinded: it is
+  the same for the same message, so signing one message many times repeats
+  one sequence of entries in the nonce multiplication.
+- The other targets do not define the switch, and the tables they do not
+  use are dropped at link time: the Nano S Plus flash images are the same
+  bytes with and without this branch, for both backends, in
+  `MODE=prod FROST=0` and `MODE=debug FROST=1`.
+
+### Alternatives considered
+
+- 64 random bits: 80 steps, about 0.2 s per multiplication instead of 0.1 s.
+  32 bits already make a repeated sequence a one in 2^32 event.
+- Blinding the nonce multiplication too, through the same entry point:
+  0.1 s more per signature. Left out: the case it covers is one message
+  signed many times.
+- Splitting the scalar into two random halves and multiplying twice: twice
+  the cost of the multiplication.
+- A randomized copy of the table in RAM, as on the other devices: ADR-004.
+
+## ADR-009: on Nano S the multiplication has a path for the two curve fields
+
+Date: 2026-11-27
+
+### Context
+
+After ADR-007 a signature is 6391 Montgomery products and they are 95.5 % of
+its cycles. A product is 520 `MULS`. The secure element of the Nano S has the
+iterative multiplier of this core, 32 cycles per `MULS`, so 82 % of a product
+is spent inside `MULS`, and one `MULS` costs as much as 32 additions or
+shifts.
+
+Two things follow. A 32-bit product from three `MULS` and a dozen more
+instructions is cheaper than one from four. And in the reduction one operand
+of every product is a limb of the modulus, a constant: it can be multiplied
+with no `MULS` at all.
+
+The multiplication takes its modulus as an argument. The app calls it with
+four: the base fields of the two curves, where the points and Poseidon live,
+and the two subgroup orders, for a few products per signature.
+
+### Decision
+
+`zkn_mul_mont_256` tests its modulus, which is public: `n0` first, then the
+limbs. For BN254 r and BLS12-381 r it takes a path written for this
+multiplier. Any other modulus takes the former code, unchanged.
+
+In the field path:
+
+- `m * p[j]` is a fixed sequence of shifts, additions and subtractions, read
+  off the non-adjacent form of `p[j]`: four instructions per digit, on a
+  64-bit accumulator. `m = t[0] * n0` goes the same way. The sequences are
+  generated from the modulus by `tools/gen_mont256_armv6m.py` into
+  `zkn_mont256_armv6m_fields.inc`, which is committed; `--check` tells
+  whether the file still matches its generator.
+- `a[j] * b[i]` takes three `MULS`: the two halves, and
+  `|xl - xh| * |yh - yl|` with its sign applied as a mask, from which the
+  middle term comes. The form with sums of halves does not fit: 17 bits by
+  17 overflow the 32 bits `MULS` returns.
+
+The subgroup orders stay out of this path on purpose. The sign of the middle
+term is a word of zeros or of ones that depends on the operands, and the
+scalars reduced modulo an order (the secret scalar and the nonce in
+`S = r + h s`, the shares) are not randomized.
+
+Two switches: `ZKN_MONT256_NO_FIELD_PATHS` leaves the path out, for a core
+with a single-cycle multiplier, where it is slower than the other one.
+`ZKN_MONT256_FIELD_NO_KARATSUBA` keeps the path with four `MULS` per product
+and no sign.
+
+### Consequences
+
+- Per product, 32-cycle multiplier, under emulation: 192 `MULS` and 11766
+  cycles for BN254 r, 11267 for BLS12-381 r, against 520 and 20245. The other
+  moduli: 20261, the 16 more being the test on the modulus.
+- One signature on the emulated Nano S image: 81.4 M cycles instead of
+  135.5 M, 3.7 s expected on the device; 78.2 M and 3.6 s on Bandersnatch.
+  Not measured yet. The share of the multiplication goes from 95.5 % to
+  92.6 %.
+- Same output for every input: the emulated routine is compared with the
+  algorithm of the C version on 8316 products over eleven moduli, reduced or
+  not, with operands whose halves are equal or ordered both ways, and with
+  four moduli one limb or one `n0` away from a field, which must go back to
+  the other path. The routine linked in the production image gives the same
+  results.
+- Each modulus takes the same number of cycles for every input; the check
+  script fails otherwise.
+- Flash: 2048 bytes more, 50135 bytes of code in `MODE=prod` and 68503 in
+  `MODE=debug FROST=1`. Stack: the frame of the multiplication goes from 84
+  to 88 bytes; the peaks measured on the emulated device do not move (2296
+  of 3184 in production, 2616 of 2904 with `FROST=1`).
+- What the sign exposes. In the scalar multiplications the operands are
+  coordinates, randomized as ADR-004 describes. In the challenge of a
+  signature they are public. One computation puts a secret through this
+  path without randomization: Poseidon of the viewing private key, when the
+  0zk address is derived. That key is the one the app exports to the host on
+  request. `ZKN_MONT256_FIELD_NO_KARATSUBA` removes the sign for 0.4 s per
+  signature: 13134 cycles per product, 4.1 s expected.
+- The other targets do not compile this file: it is an empty object outside
+  Thumb-1.
+
+### Alternatives considered
+
+- Chains on the 16-bit halves of each limb, four per product, recombined as
+  the four `MULS` were. Same number of digits, and the recombination stays:
+  about 10 cycles more per product of the reduction.
+- The same path for every modulus, with the chains replaced by `MULS`. It
+  would put the unrandomized scalars through the signed middle term for a
+  few products per signature.
+- Karatsuba above the limbs, on halves of the operands, with the product
+  and the reduction separated: 48, 36 or 27 limb products instead of 64 in
+  `a * b` depending on the depth, about 32 more bytes of stack. Not done
+  here. It is the next step on the multiplication if 3.7 s is not enough.
+- A squaring of its own. It saves part of `a * a` only, and squarings are a
+  minority of the products of a signature.
+
 ## ADR-008: the signer takes the subgroup order from the curve
 
 Date: 2026-11-27
@@ -111,7 +285,8 @@ address, signature). The Bandersnatch table for 5 inputs keeps its default.
 
 - On the emulated Nano S image: 6391 Montgomery products per signature
   instead of 8018 and no generator, 135.5 M cycles instead of 213.9 M.
-  Expected on the device: 6.2 s. Not measured yet.
+  Expected on the device: 6.2 s. Measured since: two signatures, one per
+  curve, in 12.37 s.
 - What a signature is made of now: Poseidon 42 %, the two fixed-base
   multiplications 41 %, the two inversions 16 %.
 - Flash on Nano S: 12.2 KB more (48087 bytes of code in `MODE=prod`, 66519 in
