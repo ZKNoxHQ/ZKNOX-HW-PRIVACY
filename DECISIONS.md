@@ -2,6 +2,220 @@
 
 Architecture decisions for ZKNOX-HW-PRIVACY, newest first.
 
+## ADR-011: the cx backend is allowed on Nano S: no aliased result, field elements compared as residues
+
+Date: 2026-11-27
+
+### Context
+
+ADR-005 refused `BACKEND=cx` on Nano S because it signs wrongly on the
+device, and left the cause open. It is found.
+
+A debug image of the cx backend ran a ladder of fixed computations on a Nano
+S, firmware 2.1.0, from the modular arithmetic up to a signature, and the
+host compared each value with the reference. First run, BabyJubjub, eight
+steps read:
+
+- The Montgomery radix is 2^256, as the library assumes: `to_montgomery(1)`
+  into another bignum returns 2^256 mod p.
+- Modular arithmetic, and Montgomery arithmetic with distinct bignums, are
+  right.
+- The Montgomery form of 1 that the curve holds is wrong. The curve computes
+  it in place, `cx_mont_to_montgomery(x, x, ctx)`, and the device returns the
+  Montgomery form of `1 + J * 2^128`, where `J` is the top 128 bits of
+  `2^384 mod p`.
+- Every curve value after that is wrong, the base point included.
+
+That value has one explanation. On this device a bignum is made of 128-bit
+words (`CX_BN_WORD_ALIGNEMENT`) and the coprocessor multiplies word by word.
+It reads the operand from the bignum it writes the result to: after the
+first word, the high word it reads is the high word of its own intermediate
+result, `z0 * R^2 * 2^-128 mod p`, where `z0` is the low word of the operand.
+Converting into another bignum is right, converting in place is not.
+
+The library converts in place wherever it turns a constant or an input into
+Montgomery form: the curve constants (1, a, d), the Poseidon constants and
+states, the points it randomizes. 74 calls in the eight steps read, 482 in a
+signature.
+
+A host model of `cx_bn`, exact but for this one behaviour, linked with the
+cx code path of the library as Nano S builds it, returns the 19 wrong values
+the device returned in those steps, byte for byte, and the reference where
+the device returned it. Exact, the same model returns the reference at every
+step and passes the Rust suite, ceremonies included: the cx code path of the
+library is right, the fault is in what the device does with an aliased
+result.
+
+The second run asked the device about each primitive, called with the result
+bignum as an operand and compared with the same call into another bignum:
+
+| Wrong with an aliased result | Right with an aliased result |
+|---|---|
+| `cx_mont_to_montgomery(x, x)` | `cx_mont_invert_nprime`, r == a |
+| `cx_mont_from_montgomery(x, x)` | `cx_bn_mod_add`, r == a, r == b |
+| `cx_mont_mul`, r == a, r == b, r == a == b | `cx_bn_mod_sub`, r == a, r == b |
+| `cx_mont_pow`, r == a | `cx_bn_mod_invert_nprime`, r == a |
+| `cx_bn_mod_mul`, r == a, r == b | |
+| `cx_bn_reduce(r, r)` | |
+
+Same answers for both fields. Every multiplication and the reduction are
+wrong, the additions and the inversions are right.
+
+Nano S Plus does not have it: its cx image makes the same conversions in
+place and is reported to sign correctly on the device. The other models have
+not been looked at for this.
+
+### Decision
+
+With the cx backend on Nano S, the six primitives of the left column go
+through `src/zknox/src/bn/zkn_bn_ledger.c`. When the result bignum is also an
+operand, the syscall writes into a fresh bignum, which is copied to the
+result and released. Every other call goes straight to the syscall.
+
+The switch is `ZKN_CX_NO_ALIAS` in `src/zknox/src/bn/zkn_bn.h`, set when
+`TARGET_NANOS` is defined. Other targets keep the direct mapping, and can be
+given the switch from their build if one of them shows the fault.
+
+The device has a second fault, measured in the third run below: a Montgomery
+product comes back in `[0, 2p)`. Code that compares two field elements, or a
+field element with a small constant, now calls `zkn_bn_cmp_mod` and
+`zkn_bn_cmp_u32_mod` (`zkn_bn.h`), which take the modulus. With the cx
+backend on Nano S (`ZKN_CX_UNREDUCED`, set when `TARGET_NANOS` is defined)
+they reduce their operands into fresh bignums and compare those. Everywhere
+else they are `zkn_bn_cmp` and `zkn_bn_cmp_u32`. Three places use them: the
+curve equation, the neutral point, and the public key the signer derives
+again.
+
+`BACKEND=cx` is allowed again on Nano S, as on the other targets: the
+refusal of ADR-005 is lifted, and with it the one ADR-003 had for
+`BACKEND=cx FROST=1`. `BACKEND=sw` stays the default. It is the faster one
+there, 3.9 s per signature against 21.3 s, and the only one with the
+fixed-base table read from flash and the blinded key scalar (ADR-004,
+ADR-010): the Makefile defines those two for `BACKEND=sw` only, and the cx
+build keeps the fixed-base multiplication of `ZKN_LOW_RAM`, two windows over
+a randomized table in RAM.
+
+### On the device
+
+Second run, with the guard on the Montgomery primitives. Through the names
+the library uses, every Montgomery call with an aliased result came back
+right. BabyJubjub: the twelve steps are right, the signature included.
+Bandersnatch: eleven steps are right, and the signature was refused, with
+`ZKN_ERR_INVALID_PARAM`. The device holds 64 bignums of 32 bytes; a
+signature needs 54.
+
+Third run, with the six guards. Through the names the library uses, the
+fifteen aliased calls are right, `cx_bn_mod_mul` and `cx_bn_reduce`
+included. BabyJubjub: three signatures of three are right, 20.6 s each.
+Bandersnatch: three of three are refused, after 7.7 s each.
+
+The refusal is a second fault of the device, and that run identified it:
+the coprocessor does not reduce a Montgomery product below p. Four squares
+were chosen so that the value before the last conditional subtraction is at
+least p; for the four, on both fields, the device returned the expected
+value plus p. A value modulo p then exists as two bignums.
+
+The standard signer derives the public key again and compares it, as
+bignums in Montgomery form, with the one it was given. That comparison is
+what fails. The model given unreduced products does the same thing: the
+Bandersnatch signature is refused at the same call with the same code, every
+other step is right and no value is wrong.
+
+BabyJubjub is not spared, its test key is. A product of two values below p
+is below `p (1 + p / 2^256)` before the last subtraction, so a coordinate
+can come back as its value plus p only when its Montgomery form is below
+`p^2 / 2^256`: 0.19 p for the BabyJubjub field, 0.45 p for the Bandersnatch
+field. The public key of the ladder has its coordinates at 0.46 p and 0.82 p
+on BabyJubjub, never refused, and at 0.08 p and 0.05 p on Bandersnatch,
+refused four times of four. A third of the BabyJubjub keys have a
+coordinate under the threshold, and 70 % of the Bandersnatch keys. On the
+model, with keys drawn at random and three signatures per key, 6 BabyJubjub
+keys of 40 are refused at least once, and 16 Bandersnatch keys of 40.
+
+With the comparisons of residues, the model signs every time: 240
+signatures over 40 random keys per curve, the ladder, and the Rust suite,
+with unreduced products alone and with additions and subtractions that
+correct by one modulus only.
+
+Fourth run, with the comparisons of residues. Every step is right on both
+curves, and so are the eight signatures asked: two per curve with the key
+of the ladder, and one for each of two more keys per curve, chosen among
+those the model refused most. 21.3 s each. The same run read, for ten
+primitives, how many of eight results on operands just below p come back at
+or above p: `cx_mont_mul` 1 on the BabyJubjub field and 4 on the
+Bandersnatch field, which are the counts of a product without its last
+subtraction, and none for the nine others (the conversions, `cx_mont_pow`,
+the inversions, `cx_bn_mod_mul`, `cx_bn_mod_add`, `cx_bn_mod_sub`,
+`cx_bn_reduce`).
+
+The library also hands those products to `cx_bn_mod_add` and
+`cx_bn_mod_sub`, which the SDK specifies for operands strictly below the
+modulus; every value read on the device was right nonetheless.
+
+A bignum syscall takes about 0.7 ms on this device: 87 s for the 126 000 of
+the second run, and a signature is 25 700 of them, which is the 19.14 s of
+ADR-005. A signature took 20.6 s with the six guards and 21.3 s in the
+fourth run.
+
+### The cx build on Nano S
+
+| | `MODE=prod` | `MODE=debug FROST=1` |
+|---|---|---|
+| Code | 36887 bytes | 54423 bytes |
+| Statics | 1420 bytes | 1700 bytes |
+| Stack | 3184 bytes | 2904 bytes |
+| Deepest command, static worst case | 1952 bytes | 2000 bytes |
+
+The bignums are in the pool of the coprocessor, 64 of 32 bytes. On the model
+a signature has 54 alive at its deepest point and a threshold ceremony 57:
+with a pool of 56 the ceremony fails.
+
+What has run with it on a device: the self-test, that is the curve
+arithmetic, the hashes and eight signatures through SIGN_WITH_PRIVKEY. What
+has not: the production commands with their screens, the DKG and the
+threshold signature. Those pass on the host model given the faults and the
+pool of the device, the Rust suite and the ceremonies with the model in
+seats 1, 3 and 5. The stack figures are static: no emulator runs this build.
+
+### Consequences
+
+- Images: the six that the Makefile built before are byte-identical, Nano S
+  `sw` (production, and debug with `FROST=1`) and Nano S Plus `sw` and `cx`
+  (same two modes). The work-arounds are 570 bytes of a Nano S cx image.
+- On the host model with the nine faults of the table, the cx code path
+  returns the reference at every step of the ladder and passes the Rust
+  suite, 33 tests, ceremonies included. The device agrees on every step it
+  ran, the Bandersnatch signature apart.
+- An aliased call costs four more syscalls and one more live bignum. A
+  signature makes 595 of them (482 conversions in, 5 out, 48 products, 60
+  powers).
+- ADR-005 left open whether the wrong signatures tell anything about the
+  key. They can. The faulty image hashes the key and reduces the nonce
+  correctly, so for one message it uses the nonce a correct image uses, with
+  another challenge, because the public key, the commitment and the Poseidon
+  constants are wrong. Two signatures of one message, one from each image,
+  give the private scalar: `s = (S - S') / (h - h') mod l`. Checked on the
+  model. The faulty challenge `h'` follows from the faulty signature, the
+  public key that image exports and the fault, which is deterministic. A key
+  that signed with a cx image on Nano S and with any correct image should be
+  considered exposed. The runs recorded in ADR-005 used the fixed key of the
+  test vector.
+- A new comparison of field elements has to go through `zkn_bn_cmp_mod`.
+  `zkn_bn_cmp` on such values is right on every backend but this one.
+
+### Alternatives considered
+
+- Fixing the call sites: 20 conversions in place in the library, and the
+  next one written would bring the fault back.
+- Guarding `cx_mont_invert_nprime` as well, as the first version did. The
+  device computes it correctly with an aliased result and the library never
+  calls it that way.
+- Guarding every target. Rejected: the Nano S Plus images would change for
+  nothing, and no other model is known to have the fault.
+- Reducing every Montgomery product, so that `zkn_bn_cmp` stays right.
+  Three more syscalls per product at least, the reduction in place being
+  one of the wrong calls: 36 000 more per signature, 25 s.
+
 ## ADR-010: on Nano S the private scalar is blinded in the public key derivation
 
 Date: 2026-11-27
@@ -51,8 +265,8 @@ call. The result is the same point.
   among them; the JavaScript and Rust suites, the ceremonies and the
   production commands pass on the emulated Nano S.
 - One signature: 6555 Montgomery products instead of 6391, 83.6 M cycles
-  instead of 81.5 M, 3.8 s expected on the device, 3.7 s on Bandersnatch. Not
-  measured yet. Ten calls to the random generator instead of eight.
+  instead of 81.5 M, 3.8 s expected on the device, 3.7 s on Bandersnatch.
+  Measured since: 3.9 s. Ten calls to the random generator instead of eight.
 - Flash: 2432 bytes more, 2048 of them tables: 52567 bytes of code in
   `MODE=prod`, 70935 in `MODE=debug FROST=1`. The stack peaks measured on
   the emulated device do not move: 2296 of 3184 in production, 2616 of 2904
@@ -389,6 +603,8 @@ In the same low-RAM code, R is no longer normalized before
 ## ADR-005: `BACKEND=cx` is refused on Nano S
 
 Date: 2026-11-26
+
+Superseded by ADR-011, which found the cause and lifts the refusal.
 
 ### Context
 

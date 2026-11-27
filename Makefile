@@ -128,16 +128,15 @@ endif
 # The safe development combinations remain expressible:
 #     make MODE=debug FROST=0    debug surface without the ceremony
 #     make MODE=debug FROST=1    debug ceremony / signing tests
-# Nano S: BACKEND=sw only. On the device (firmware 2.1.0) the cx backend
-# returns a wrong EdDSA signature, with R off the curve, and takes two thirds
-# of the time of the C code; Speculos cannot run it for this model. See
-# DECISIONS.md, ADR-005.
+# Nano S: both backends, as on the other targets. BACKEND=sw is the default
+# and the faster one: 3.9 s per signature, with the fixed-base table read
+# from flash and the blinded key scalar (ADR-004, ADR-010). BACKEND=cx takes
+# 21 s. It signs correctly since the library works around two faults of the
+# coprocessor (DECISIONS.md, ADR-011, which lifts the refusal of ADR-005).
+# Speculos cannot run it for this model: it is checked on a device only.
 # FROST=1 stays opt-in there, debug included: the ceremony takes 0.3 KB of RAM
 # out of the stack and 1.8 KB of NVRAM scratch (ADR-003).
 ifeq ($(TARGET_NAME),TARGET_NANOS)
-    ifneq ($(BACKEND),sw)
-        $(error BACKEND=$(BACKEND) is not available on Nano S: it returns wrong signatures on the device, see DECISIONS.md ADR-005)
-    endif
     FROST ?= 0
 endif
 ifeq ($(MODE),debug)
@@ -228,9 +227,14 @@ DEFINES += ZKN_LOW_RAM
 #   ZKN_CEREMONY_SCRATCH_NVM  public bulk of the ceremony state in an NVRAM
 #                             scratch area (src/handler/zkn_nv_scratch.h)
 #   ZKN_FROST_MAX_SIGNERS     the app signs for a quorum of at most DKG_MAX_T
-# and, for every build:
+# for every build:
 #   POSEIDON_MAX_INPUTS       the largest Poseidon arity the app uses (5, the
 #                             EdDSA challenge), which sizes the hash context
+#   ZKN_POSEIDON_ARITIES      the Poseidon tables linked for the BN254 field,
+#                             one bit per number of inputs: 1 and 3 (0zk
+#                             address) and 5 (signature). The Bandersnatch
+#                             table (5 inputs) keeps its default. ADR-007
+# and, with BACKEND=sw:
 #   ZKN_FIXEDBASE_FLASH_TABLE fixed-base multiplication over the 16-entry
 #                             table read from flash: 64 steps instead of 128,
 #                             no table in RAM (DECISIONS.md, ADR-004)
@@ -238,19 +242,20 @@ DEFINES += ZKN_LOW_RAM
 #                             private scalar plus a random multiple of the
 #                             subgroup order, 72 steps instead of 64
 #                             (DECISIONS.md, ADR-010)
-#   ZKN_POSEIDON_ARITIES      the Poseidon tables linked for the BN254 field,
-#                             one bit per number of inputs: 1 and 3 (0zk
-#                             address) and 5 (signature). The Bandersnatch
-#                             table (5 inputs) keeps its default. ADR-007
 # The Montgomery multiplication comes from src/zknox/src/zkn_mont/
 # zkn_mont256_armv6m.S, which enables itself on this core
 # (ZKN_MONT256_NO_ASM keeps the C version). For the two curve fields it
 # takes the path written for the 32-cycle multiplier of this chip:
 # 192 MULS per product instead of 520, the reduction by shifts and additions
 # (ZKN_MONT256_NO_FIELD_PATHS leaves that path out; DECISIONS.md, ADR-009).
-ZKN_NANOS_DEFINES := POSEIDON_MAX_INPUTS=5 ZKN_FIXEDBASE_FLASH_TABLE ZKN_POSEIDON_ARITIES=0x2A \
-                     ZKN_FIXEDBASE_SCALAR_BLINDING \
+ZKN_NANOS_DEFINES := POSEIDON_MAX_INPUTS=5 ZKN_POSEIDON_ARITIES=0x2A \
                      ZKN_AES_GCM_OVER_CX_AES ZKN_CEREMONY_SCRATCH_NVM ZKN_FROST_MAX_SIGNERS=3
+# The flash table and the blinded scalar exist for the software bignums only.
+# With BACKEND=cx the fixed-base multiplication is the one of ZKN_LOW_RAM:
+# two windows, a randomized table in RAM.
+ifeq ($(BACKEND),sw)
+ZKN_NANOS_DEFINES += ZKN_FIXEDBASE_FLASH_TABLE ZKN_FIXEDBASE_SCALAR_BLINDING
+endif
 DEFINES += $(ZKN_NANOS_DEFINES)
 endif
 

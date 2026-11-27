@@ -188,10 +188,18 @@ the signing request) goes to an NVRAM scratch area and the secrets stay in
 RAM; the commands and their wire format are those of the other devices, up
 to 3-of-5. Details in [DECISIONS.md](DECISIONS.md), ADR-001 and ADR-003.
 
-`BACKEND=sw` is the only backend there. On a Nano S the cx backend returns
-wrong signatures, and the Makefile refuses it (ADR-005). Speculos could not
-have shown it: 0.25.5 is the last release with this model and it does not
-emulate `cx_mont_*` for it.
+`BACKEND=sw` is the default there and the faster backend. `BACKEND=cx` is
+available as on the other devices: 21 s per signature against 3.9 s, without
+the flash table and the blinded key scalar. It used to return wrong
+signatures on a Nano S and the Makefile refused it (ADR-005); Speculos could
+not have shown it: 0.25.5 is the last release with this model and it does
+not emulate `cx_mont_*` for it. The cause is the device. Its multiplications
+return a wrong value when the result bignum is also an operand, and the
+library converts to Montgomery form in place; and it leaves its Montgomery
+products unreduced, where the library compared some of them as bignums. The
+library works around both on this target and both curves sign correctly on
+the device (ADR-011). Of the cx build only a self-test has run on a device
+so far.
 
 Speed, on a Nano S with firmware 2.1.0: 28 s per signature with the C code of
 the first port. Two changes address it (ADR-004). The field multiplication is
@@ -204,13 +212,13 @@ two: 12.6 s per signature. Then the signer derives the public key itself,
 once, where the handler and the signer each derived it (ADR-006), and
 Poseidon comes from the library's tables, in Montgomery form in flash, with
 no round-constant generator at run time (ADR-007). Measured with both: 6.2 s
-per signature. The last change has only run on the emulated device so far:
-for the two fields the curves are defined over, the multiplication reduces
-with shifts and additions and takes three `MULS` per product, 192 instead of
-520 (ADR-009). 3.7 s per signature are expected with it, and 3.8 s with the
-private scalar blinded in the public key derivation (ADR-010): the key is
-multiplied as `s + lambda * l`, with a fresh 32-bit `lambda`, so that the
-entries read from the flash table differ from one signature to the next.
+per signature. Then, for the two fields the curves are defined over, the
+multiplication reduces with shifts and additions and takes three `MULS` per
+product, 192 instead of 520 (ADR-009), and the private scalar is blinded in
+the public key derivation (ADR-010): the key is multiplied as
+`s + lambda * l`, with a fresh 32-bit `lambda`, so that the entries read
+from the flash table differ from one signature to the next. Measured with
+both: 3.9 s per signature.
 The DKG and FROST commands have been validated on the emulated device only.
 
 Stack left on the emulated device at the deepest command: 888 bytes of 3184

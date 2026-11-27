@@ -4,6 +4,60 @@
 
 Date: 2026-11-27
 
+### cx backend on Nano S: the cause of the wrong signatures
+
+- Found on the device: on Nano S, firmware 2.1.0, the multiplications of the
+  coprocessor and its reduction return a wrong value when the result bignum
+  is also an operand. The operand is read by 128-bit words from the bignum
+  being written. The library converts to Montgomery form in place for the
+  curve constants and the Poseidon constants, so every value after them was
+  wrong. See [DECISIONS.md](DECISIONS.md), ADR-011.
+- Measured primitive by primitive. Wrong with an aliased result:
+  `cx_mont_to_montgomery`, `cx_mont_from_montgomery`, `cx_mont_mul`,
+  `cx_mont_pow`, `cx_bn_mod_mul`, `cx_bn_reduce`. Right: `cx_bn_mod_add`,
+  `cx_bn_mod_sub` and the two inversions.
+- With the cx backend on Nano S those six now go through
+  `src/zknox/src/bn/zkn_bn_ledger.c`, which computes into a fresh bignum when
+  the result is also an operand (`ZKN_CX_NO_ALIAS`, set for `TARGET_NANOS`).
+- Nothing else moves: the Nano S `sw` images and the Nano S Plus `sw` and
+  `cx` images are byte-identical.
+- On the device, with the six guards: the fifteen aliased calls are right
+  through the names the library uses, and every step of the ladder is right
+  on BabyJubjub, three signatures of three included, 20.6 s each. On
+  Bandersnatch every step is right but the signature, refused three times
+  of three. A host model of `cx_bn` carrying the faults returns the 19 wrong
+  values of the first device run, and with the guards the reference and the
+  whole Rust suite.
+- The refusal is a second fault of the device, measured too: the
+  coprocessor does not reduce a Montgomery product below p (four chosen
+  squares came back as the expected value plus p, on both fields). The
+  signer compares the public key it derives again as bignums, and the
+  comparison fails. A third of the BabyJubjub keys are exposed to it as
+  well; the key of the test is not one of them.
+- Field elements are now compared as residues: `zkn_bn_cmp_mod` and
+  `zkn_bn_cmp_u32_mod` take the modulus, and with the cx backend on Nano S
+  they reduce their operands first (`ZKN_CX_UNREDUCED`). Used for the curve
+  equation, the neutral point and the public key check of the signer. On
+  every other build they are `zkn_bn_cmp` and `zkn_bn_cmp_u32`: same images.
+  On the model every signature is then given, over 40 random keys per
+  curve.
+- On the device with both changes: every step of the ladder is right on
+  both curves, and the eight signatures asked are right, four keys, 21.3 s
+  each. Of ten primitives only `cx_mont_mul` returns values at or above p.
+- `BACKEND=cx` is allowed again on Nano S, as on the other targets, `FROST=1`
+  included. `BACKEND=sw` stays the default: 3.9 s per signature against
+  21.3 s, and the flash table and the blinded key scalar exist for it only.
+  The cx image is 36887 bytes of code in `MODE=prod`; a signature uses 54 of
+  the 64 bignums of the coprocessor, a threshold ceremony 57.
+- With cx on a device, only the self-test has run. The production commands
+  and the threshold ceremony pass on the host model with the faults and the
+  pool of the device.
+- A key that signed with a cx image on Nano S and with a correct image is
+  exposed: same nonce, another challenge. ADR-011 has the detail.
+- `zkn_bn_ledger.h` declared `zkn_montgomery_export` with a pointer for the
+  length where the function takes a value. The header now matches the code.
+  Nothing calls that function.
+
 ### Private scalar blinded in the public key derivation
 
 - On Nano S `zkn_prv2pub` multiplies the base point by `s + lambda * l`:
@@ -17,8 +71,8 @@ Date: 2026-11-27
 - Only the key derivation. The nonce multiplications keep their 64 steps.
 - One signature on the emulated Nano S image: 6555 Montgomery products
   instead of 6391, 83.6 M cycles instead of 81.5 M, 3.8 s expected on the
-  device (3.7 s on Bandersnatch). Ten calls to the random generator instead
-  of eight. Same signatures, byte for byte.
+  device (3.7 s on Bandersnatch), 3.9 s measured since. Ten calls to the
+  random generator instead of eight. Same signatures, byte for byte.
 - Flash: 2432 bytes more, 2048 of them tables (52567 bytes of code in
   `MODE=prod`, 70935 in `MODE=debug FROST=1`). The stack peaks of the
   commands do not move (margins 888 and 288).
@@ -89,11 +143,12 @@ First runs on a physical Nano S, firmware 2.1.0, and what they changed. See
 | Assembly multiplication, table read from flash (ADR-004) | 12.57 s | 2.76 s |
 | Public key derived once by the signer (ADR-006) | 9.8 s expected | unchanged |
 | Poseidon from tables (ADR-007) | 6.2 s | unchanged |
-| Multiplication path of the curve fields (ADR-009) | 3.7 s expected | 1.7 s expected |
-| Private scalar blinded in the key derivation (ADR-010) | 3.8 s expected | 1.8 s expected |
+| Multiplication path of the curve fields (ADR-009) | 3.7 s expected, not measured alone | 1.7 s expected |
+| Private scalar blinded in the key derivation (ADR-010) | 3.9 s | 1.8 s expected |
 
-- `BACKEND=cx` returns a wrong signature on the device, in 19.14 s. The
-  Makefile now refuses it for `TARGET_NANOS`, in every `MODE`.
+- `BACKEND=cx` returned a wrong signature on the device, in 19.14 s, and the
+  Makefile refused it for `TARGET_NANOS`. ADR-011 has the cause and lifts
+  the refusal.
 - The 256-bit Montgomery multiplication is in Thumb-1 assembly on this
   target: 520 `MULS` and 4125 cycles per product under emulation, against 776
   and about 12230 for the C code (20245 against 36290 on a core with the
