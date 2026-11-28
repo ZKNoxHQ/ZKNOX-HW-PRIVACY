@@ -1,5 +1,8 @@
 //! Port of `js/lib/slip0010.js` — SLIP-0010 derivation with the
 //! `"babyjubjub seed"` HMAC key, hardened indices only.
+//!
+//! The Bandersnatch signing key has its own master, under
+//! `"bandersnatch seed"`: [`master_key_from_seed_with`] takes the HMAC key.
 
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
@@ -25,9 +28,19 @@ pub fn mnemonic_to_seed(mnemonic: &str) -> [u8; 64] {
     out
 }
 
+/// HMAC key of the BabyJubjub master, `BABYJUBJUB_SEED_KEY` in the firmware.
+pub const BABYJUBJUB_SEED_KEY: &[u8] = b"babyjubjub seed";
+/// HMAC key of the Bandersnatch master, `BANDERSNATCH_SEED_KEY` in the firmware.
+pub const BANDERSNATCH_SEED_KEY: &[u8] = b"bandersnatch seed";
+
 /// `getMasterKeyFromSeed`.
 pub fn master_key_from_seed(seed: &[u8]) -> Node {
-    let mut mac = HmacSha512::new_from_slice(b"babyjubjub seed").expect("hmac key");
+    master_key_from_seed_with(seed, BABYJUBJUB_SEED_KEY)
+}
+
+/// The SLIP-0010 master of `seed` under the HMAC key `seed_key`.
+pub fn master_key_from_seed_with(seed: &[u8], seed_key: &[u8]) -> Node {
+    let mut mac = HmacSha512::new_from_slice(seed_key).expect("hmac key");
     mac.update(seed);
     split(&mac.finalize().into_bytes())
 }

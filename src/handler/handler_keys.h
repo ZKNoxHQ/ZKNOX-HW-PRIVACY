@@ -23,7 +23,8 @@
 // SIGNING_PUBKEY (0x01) — twisted-Edwards signing pubkey, x||y (64 B).
 //   in:  account(4 BE)
 //   P1 = 0x00 silent (DEBUG builds only) / 0x01 display-and-confirm
-int handler_signing_pubkey(buffer_t *cdata, uint8_t p1);
+//   P2 = curve: 0x00 or 0x02 BabyJubjub, 0x01 Bandersnatch
+int handler_signing_pubkey(buffer_t *cdata, uint8_t p1, uint8_t p2);
 
 // VIEWING_PUBKEY (0x10) — Ed25519 viewing pubkey (32 B, RFC 8032 compressed).
 //   in:  account(4 BE)

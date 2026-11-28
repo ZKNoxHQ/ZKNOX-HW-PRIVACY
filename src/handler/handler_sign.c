@@ -104,7 +104,17 @@ int handler_eddsa_poseidon_sign_stored(void)
   uint8_t chain_code[32];
   bool bn_locked = false;
 
-  error = derive_private_key(KEY_TYPE_SPENDING, account, derived_priv, chain_code);
+  // sign_info.curveID is populated by handler_blind_sign. 0 is treated as
+  // legacy BabyJubjub.
+  uint8_t stored_cid = G_context.sign_info.curveID;
+  uint32_t curveID = (stored_cid == _BANDERSNATCH_ID) ? _BANDERSNATCH_ID : _BABYJUJUB_ID;
+
+  // Each curve signs with the key of its own SLIP-0010 seed key.
+  key_type_t key_type;
+  error = spending_key_type(curveID, &key_type);
+  if (error != ZKN_OK)
+    goto end;
+  error = derive_private_key(key_type, account, derived_priv, chain_code);
   if (error != ZKN_OK)
     goto end;
 
@@ -115,10 +125,6 @@ int handler_eddsa_poseidon_sign_stored(void)
 #ifndef ZKN_HAVE_EDDSA_POSEIDON_SIGN
   zkn_edpoint_t Kpub;
 #endif
-  // sign_info.curveID is populated by handler_blind_sign. 0 is treated as
-  // legacy BabyJubjub.
-  uint8_t stored_cid = G_context.sign_info.curveID;
-  uint32_t curveID = (stored_cid == _BANDERSNATCH_ID) ? _BANDERSNATCH_ID : _BABYJUJUB_ID;
 
   ZKN_CHECK(tEdwards_Curve_alloc_init(&curve, curveID));
 #ifdef ZKN_HAVE_EDDSA_POSEIDON_SIGN
@@ -219,7 +225,12 @@ int handler_blind_sign_no_display(uint8_t p1, buffer_t *cdata)
   uint32_t account = read_u32_be(cdata->ptr);
   memcpy(msg, cdata->ptr + 4, 32);
 
-  error = derive_private_key(KEY_TYPE_SPENDING, account, derived_priv, chain_code);
+  // Each curve signs with the key of its own SLIP-0010 seed key.
+  key_type_t key_type;
+  error = spending_key_type(curveID, &key_type);
+  if (error != ZKN_OK)
+    goto end;
+  error = derive_private_key(key_type, account, derived_priv, chain_code);
   if (error != ZKN_OK)
     goto end;
 

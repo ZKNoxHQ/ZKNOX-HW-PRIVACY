@@ -38,11 +38,15 @@ RAILGUN Ledger app so a shared host derives the same 0zk identity.
 | Key | Curve | Path | Used by |
 |-----|-------|------|---------|
 | Spending | BabyJubJub | `m/44'/1984'/account'/0'/0'` | `SIGNING_PUBKEY` (0x01), `BLIND_SIGN` (0x12) |
+| Spending | Bandersnatch | `m/44'/1984'/account'/0'/0'`, under its own master | `SIGNING_PUBKEY` (0x01) with P2 = `0x01`, `BLIND_SIGN` (0x12) with P1 = `0x01` |
 | Viewing  | Ed25519 | `m/420'/1984'/account'/0'/0'` | `VIEWING_PUBKEY` (0x10), `VIEWING_PRIVKEY` (0x13), `RAILGUN_ADDRESS` (0x14) |
 | DKG comm | Ed25519 | `m/421'/1984'/account'/0'/0'` | `ZKN_FROST` ceremony (non-exported) |
 
-All three use SLIP-0010 extended derivation with the HMAC seed key
-`"babyjubjub seed"`. The path prefixes must be declared in the app's
+All use SLIP-0010 extended derivation. The HMAC seed key of the master is
+`"babyjubjub seed"`, except for the Bandersnatch spending key, whose master is
+under `"bandersnatch seed"`: as SLIP-0010 does for the curves it names, each
+signing curve has its own master, and the two spending keys of an account are
+unrelated. The path prefixes must be declared in the app's
 `PATH_APP_LOAD_PARAMS` (`Makefile`) — `"44'/1984'" "420'/1984'" "421'/1984'"` —
 or BOLOS refuses the corresponding `os_derive` with a signing error.
 
@@ -70,10 +74,13 @@ Always present.
 ### `0x01` SIGNING_PUBKEY
 
 Twisted-Edwards signing public key for an account — the key `BLIND_SIGN` (0x12)
-signs with. Account is a 4-byte big-endian index; the firmware pins the path.
+signs with on the same curve. Account is a 4-byte big-endian index; the
+firmware pins the path.
 
 - **P1**: `0x01` display-and-confirm (required in production; `0x00` silent is
-  `ZKNOX_DEBUG`-only and rejected otherwise). **P2**: `0x00`.
+  `ZKNOX_DEBUG`-only and rejected otherwise).
+- **P2** = curve id, as P1 of `BLIND_SIGN`: `0x00` BabyJubJub (default), `0x01`
+  Bandersnatch, `0x02` BabyJubJub. Any other value: `0x6A86`.
 - **CData** (4): `account(4 BE)`.
 - **Response** (on approve): `x(32) || y(32)` — 64 bytes, big-endian each.
 
@@ -94,7 +101,10 @@ EdDSA-Poseidon signature over a 32-byte message, with a blind-sign approval
 it must be an element of the selected curve's base field.
 
 - **P1** = curve id: `0x00` BabyJubJub (default), `0x01` Bandersnatch, `0x02`
-  BabyJubJub. **P2**: `0x00`.
+  BabyJubJub. **P2**: `0x00`. The key is the spending key of that curve, and
+  the challenge is hashed with the Poseidon instance of its base field: the
+  circomlib one (254/6/8/60) on BabyJubJub, 255/6/8/60 over the BLS12-381
+  scalar field on Bandersnatch.
 - **CData** (36): `account(4 BE) || msg(32)`. `msg` is read as a
   **little-endian** integer and must be `< p`, the base-field modulus of the
   curve in P1: the BN254 scalar field for BabyJubJub

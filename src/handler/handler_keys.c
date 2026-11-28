@@ -22,6 +22,7 @@
 
 #include "zkn_errors.h"
 #include "zkn_keyderivation.h"
+#include "zkn_tEdwards.h"
 
 // Read uint32 big-endian from buffer
 static inline uint32_t read_u32_be(const uint8_t *buf)
@@ -36,15 +37,20 @@ static inline uint32_t read_u32_be(const uint8_t *buf)
  * APDU data (4 B): account(4 BE)
  *   P1 = 0x00  silent — returns the key directly (DEBUG builds only)
  *   P1 = 0x01  display-and-confirm; returns the key on Approve
+ *   P2 = curve, as P1 of BLIND_SIGN: 0x00 or 0x02 BabyJubjub, 0x01
+ *        Bandersnatch
  *
- * Response: twisted-Edwards public key, x(32) || y(32) big-endian.
+ * Response: twisted-Edwards public key, x(32) || y(32) big-endian: the key
+ * BLIND_SIGN signs with on that curve. The two curves have unrelated keys,
+ * each derived under its own SLIP-0010 seed key ("babyjubjub seed",
+ * "bandersnatch seed").
  *
  * A public key is not a secret, but it is identifying material: it is the
  * long-term handle by which a protocol built on this app addresses the
  * user. Production therefore always asks; the silent path is debug-only,
  * where the tests need to fetch a key without driving a screen.
  */
-int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
+int handler_signing_pubkey(buffer_t *cdata, uint8_t p1, uint8_t p2)
 {
     if (p1 != 0x00 && p1 != 0x01)
         return io_send_sw(SW_WRONG_P1P2);
@@ -52,6 +58,15 @@ int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
     if (p1 == 0x00)
         return io_send_sw(SW_WRONG_P1P2);
 #endif
+
+    // P2: the curve, with the encoding of BLIND_SIGN's P1.
+    key_type_t key_type;
+    if (p2 == 0x00 || p2 == _BABYJUJUB_ID)
+        key_type = KEY_TYPE_SPENDING;
+    else if (p2 == _BANDERSNATCH_ID)
+        key_type = KEY_TYPE_SPENDING_BANDERSNATCH;
+    else
+        return io_send_sw(SW_WRONG_P1P2);
 
     if (cdata->size != 4)
         return io_send_sw(SW_WRONG_DATA_LENGTH);
@@ -62,7 +77,7 @@ int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
     uint8_t pubkey[PUBKEY_BABYJUBJUB_LEN];
     size_t pubkey_len = 0;
 
-    zkn_error_t error = derive_private_key(KEY_TYPE_SPENDING, account,
+    zkn_error_t error = derive_private_key(key_type, account,
                                            derived_priv, chain_code);
     if (error != ZKN_OK)
     {
@@ -71,7 +86,7 @@ int handler_signing_pubkey(buffer_t *cdata, uint8_t p1)
         return io_send_sw(SW_SIGNATURE_FAIL);
     }
 
-    error = derive_public_key(KEY_TYPE_SPENDING, PUBKEY_FORMAT_RAW,
+    error = derive_public_key(key_type, PUBKEY_FORMAT_RAW,
                               derived_priv, pubkey, &pubkey_len);
 
     // Clear private key immediately

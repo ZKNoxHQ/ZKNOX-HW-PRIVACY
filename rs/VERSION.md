@@ -282,3 +282,29 @@ message before the review (`6a80`). Left as found.
 (`MODE=debug FROST=1`) the new test passes, and it fails on the image built
 before the correction.
 
+
+## 0.5.5 — 2026-11-27
+
+Bandersnatch has its own key and its own hash (app ADR-013).
+
+- `slip0010`: `master_key_from_seed_with` takes the HMAC key of the master;
+  `BANDERSNATCH_SEED_KEY` is `"bandersnatch seed"`.
+- `oracle`: `derived_bandersnatch_key`, the key the app signs with on
+  Bandersnatch.
+- `tests/sign.rs`:
+  - the fixed signature of `SIGN_WITH_PRIVKEY` on Bandersnatch is the one
+    hashed with the Poseidon instance of the BLS12-381 scalar field;
+  - `blind_sign_on_bandersnatch_uses_the_bandersnatch_seed_key`: the
+    signature of `BLIND_SIGN_NO_DISPLAY` on Bandersnatch equals a fixed
+    vector, equals `SIGN_WITH_PRIVKEY` fed the key derived here under
+    `"bandersnatch seed"`, and differs from it fed the BabyJubjub key;
+  - `signing_pubkey_follows_the_curve_in_p2`: the Bandersnatch public key
+    equals a fixed vector, P2 = 0 and P2 = 2 return the BabyJubjub key, and
+    another value is refused.
+- The fixed vectors come from a signer written apart from ZKNOX-LibC, which
+  returns the circomlibjs signature on BabyJubjub.
+- `zknox-sim`: `SIGNING_PUBKEY` is `Rfu::Neither` in the dispatcher table, its
+  handler checks P2. The review-screen test signs a message below the field.
+
+`hw-tests`: 34 tests, all passing on the simulator. The five tests of
+`sign` that need no screen pass on the emulated Nano S Plus and Nano S.
