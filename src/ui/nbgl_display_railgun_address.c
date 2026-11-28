@@ -26,7 +26,18 @@
 /* Decimal uint32 account index = 10 digits + NUL. */
 static char g_addr_account[12];
 
-static nbgl_contentTagValue_t pairs[1];
+#if defined(TARGET_NANOS)
+/* LNS SDK (lib_nbgl at lns-2.1.0-v24.0): nbgl_useCaseAddressReview copies
+ * the whole additionalTagValueList struct over the pointer field of its
+ * context, which overwrites the title pointer with nbPairs and faults on the
+ * first page. On Nano S the same two fields go through the plain review:
+ * title, account, value, Approve / Reject. */
+#define ADDR_NB_PAIRS 2
+#else
+#define ADDR_NB_PAIRS 1
+#endif
+
+static nbgl_contentTagValue_t pairs[ADDR_NB_PAIRS];
 static nbgl_contentTagValueList_t pairList;
 
 static void review_choice(bool confirm)
@@ -76,11 +87,25 @@ int ui_display_railgun_0zk_address(void)
     pairList.nbPairs = 1;
     pairList.pairs   = pairs;
 
+#if defined(TARGET_NANOS)
+    pairs[1].item  = "0zk address";
+    pairs[1].value = G_context.pk_info.zk_address;
+    pairList.nbPairs = 2;
+
+    nbgl_useCaseReview(TYPE_OPERATION,
+                       &pairList,
+                       &ICON_APP_MAIN,
+                       "Verify RAILGUN\n0zk address",
+                       NULL,
+                       NULL,
+                       review_choice);
+#else
     nbgl_useCaseAddressReview(G_context.pk_info.zk_address,
                               &pairList,
                               &ICON_APP_MAIN,
                               "Verify RAILGUN\n0zk address",
                               NULL,
                               review_choice);
+#endif
     return 0;
 }

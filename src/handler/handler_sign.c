@@ -81,6 +81,12 @@ end:
   return error;
 }
 
+// The three signing paths below hand the private key to the signer. Where
+// the library offers EddsaPoseidon_Sign (ZKN_HAVE_EDDSA_POSEIDON_SIGN: the
+// low-RAM build, i.e. Nano S), the signer derives the public key itself,
+// once. Elsewhere the public key is computed here and derived again by the
+// check inside EddsaPoseidon_Sign_final. See DECISIONS.md, ADR-006.
+
 // ─────────────────────────────────────────────────────────────────────────
 // handler_eddsa_poseidon_sign_stored
 //
@@ -106,18 +112,26 @@ int handler_eddsa_poseidon_sign_stored(void)
   bn_locked = true;
 
   zkn_edcurve_t curve;
+#ifndef ZKN_HAVE_EDDSA_POSEIDON_SIGN
   zkn_edpoint_t Kpub;
+#endif
   // sign_info.curveID is populated by handler_blind_sign. 0 is treated as
   // legacy BabyJubjub.
   uint8_t stored_cid = G_context.sign_info.curveID;
   uint32_t curveID = (stored_cid == _BANDERSNATCH_ID) ? _BANDERSNATCH_ID : _BABYJUJUB_ID;
 
   ZKN_CHECK(tEdwards_Curve_alloc_init(&curve, curveID));
+#ifdef ZKN_HAVE_EDDSA_POSEIDON_SIGN
+  ZKN_CHECK(EddsaPoseidon_Sign(&curve, derived_priv,
+                               G_context.sign_info.payload + 4, 32,
+                               G_context.sign_info.signature));
+#else
   ZKN_CHECK(tEdwards_alloc(&curve, &Kpub));
   ZKN_CHECK(zkn_prv2pub(&curve, derived_priv, &Kpub));
   ZKN_CHECK(EddsaPoseidon_Sign_final(&curve, derived_priv, &Kpub,
                                      G_context.sign_info.payload + 4, 32,
                                      G_context.sign_info.signature));
+#endif
   G_context.sign_info.signature_len = EDDSA_POSEIDON_SIG_LEN;
 
 end:
@@ -213,12 +227,18 @@ int handler_blind_sign_no_display(uint8_t p1, buffer_t *cdata)
   bn_locked = true;
 
   zkn_edcurve_t curve;
+#ifndef ZKN_HAVE_EDDSA_POSEIDON_SIGN
   zkn_edpoint_t Kpub;
+#endif
 
   ZKN_CHECK(tEdwards_Curve_alloc_init(&curve, curveID));
+#ifdef ZKN_HAVE_EDDSA_POSEIDON_SIGN
+  ZKN_CHECK(EddsaPoseidon_Sign(&curve, derived_priv, msg, 32, out));
+#else
   ZKN_CHECK(tEdwards_alloc(&curve, &Kpub));
   ZKN_CHECK(zkn_prv2pub(&curve, derived_priv, &Kpub));
   ZKN_CHECK(EddsaPoseidon_Sign_final(&curve, derived_priv, &Kpub, msg, 32, out));
+#endif
 
   zkn_bn_unlock();
   bn_locked = false;
@@ -270,12 +290,18 @@ int handler_sign_with_privkey(buffer_t *cdata)
   bn_locked = true;
 
   zkn_edcurve_t curve;
+#ifndef ZKN_HAVE_EDDSA_POSEIDON_SIGN
   zkn_edpoint_t Kpub;
+#endif
 
   ZKN_CHECK(tEdwards_Curve_alloc_init(&curve, curveID));
+#ifdef ZKN_HAVE_EDDSA_POSEIDON_SIGN
+  ZKN_CHECK(EddsaPoseidon_Sign(&curve, prv, msg, 32, out));
+#else
   ZKN_CHECK(tEdwards_alloc(&curve, &Kpub));
   ZKN_CHECK(zkn_prv2pub(&curve, prv, &Kpub));
   ZKN_CHECK(EddsaPoseidon_Sign_final(&curve, prv, &Kpub, msg, 32, out));
+#endif
 
   zkn_bn_unlock();
   bn_locked = false;

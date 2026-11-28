@@ -1,4 +1,5 @@
-//! Port of `js/test/sign.test.js` — EdDSA-Poseidon blind signing on BabyJubjub.
+//! Port of `js/test/sign.test.js` — EdDSA-Poseidon blind signing on BabyJubjub,
+//! and one signature on Bandersnatch against a fixed vector.
 //!
 //! Three handlers exercised:
 //!   - `BLIND_SIGN_NO_DISPLAY` (0x02): account + msg, BIP-32 derivation, no UI
@@ -67,6 +68,41 @@ fn sign_with_privkey_matches_the_reference() {
 
     assert_eq!(resp.len(), 96, "expected 96-byte signature");
     assert_eq!(SigHex::from_response(&resp), reference);
+}
+
+/// Key of the Bandersnatch test, 32 bytes drawn at random once.
+const BANDERSNATCH_PRIV_HEX: &str =
+    "c81b5c7619d5314492e8cf7f43a40cc665e618584a4ffb549a75f86fb2d96525";
+
+/// Its reference. This crate has no off-device EdDSA on Bandersnatch, so the
+/// reference is a fixed vector: the signature ZKNOX-LibC returns for this key
+/// and `MSG_HEX` since `r` and `S` are reduced modulo the Bandersnatch
+/// subgroup order (pull request 4 of the library). It satisfies
+/// `[S]B = R + [8h]A`, checked with curve arithmetic written apart from the
+/// library. Before that fix the library reduced modulo the BabyJubjub order
+/// on every curve, and the signature it returned here fails that equation.
+const BANDERSNATCH_SIG_HEX: &str = "44f9c1558b279b5570d2ff44170b40e2147e71240d6dbf4bde025c550e469b1d\
+                                    0d15c0bc2055650be0231d1bc64c8cb55c04d07555be1384e5c4aff237c72d75\
+                                    150c5ac32382f3442f45585332f7ccdb261f674ba8df4bd480a8b1cfa50fb3f2";
+
+#[test]
+fn sign_with_privkey_on_bandersnatch_matches_the_reference() {
+    let Some(mut dev) = device_or_skip("sign_with_privkey_on_bandersnatch") else {
+        return;
+    };
+
+    let mut data = vec![CURVE_BANDERSNATCH];
+    data.extend_from_slice(&hex2buf(BANDERSNATCH_PRIV_HEX));
+    data.extend_from_slice(&hex2buf(MSG_HEX));
+    let resp = exchange(
+        dev.transport(),
+        &build_apdu(INS_SIGN_WITH_PRIVKEY, 0, 0, &data),
+        "SIGN_WITH_PRIVKEY/Bandersnatch",
+    )
+    .expect("SIGN_WITH_PRIVKEY on Bandersnatch");
+
+    assert_eq!(resp.len(), 96, "expected 96-byte signature");
+    assert_eq!(buf2hex(&resp), BANDERSNATCH_SIG_HEX);
 }
 
 /// On hardware this one waits for a button press, so it needs `INTERACTIVE=1`.

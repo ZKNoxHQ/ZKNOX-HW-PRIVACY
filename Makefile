@@ -128,6 +128,17 @@ endif
 # The safe development combinations remain expressible:
 #     make MODE=debug FROST=0    debug surface without the ceremony
 #     make MODE=debug FROST=1    debug ceremony / signing tests
+# Nano S: both backends, as on the other targets. BACKEND=sw is the default
+# and the faster one: 3.9 s per signature, with the fixed-base table read
+# from flash and the blinded key scalar (ADR-004, ADR-010). BACKEND=cx takes
+# 21 s. It signs correctly since the library works around two faults of the
+# coprocessor (DECISIONS.md, ADR-011, which lifts the refusal of ADR-005).
+# Speculos cannot run it for this model: it is checked on a device only.
+# FROST=1 stays opt-in there, debug included: the ceremony takes 0.3 KB of RAM
+# out of the stack and 1.8 KB of NVRAM scratch (ADR-003).
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+    FROST ?= 0
+endif
 ifeq ($(MODE),debug)
     FROST ?= 1
 else
@@ -162,13 +173,14 @@ GEN_SRC_DIR      := $(TARGET_BUILD_DIR)/gen_src
 
 # Application icons following guidelines:
 # https://developers.ledger.com/docs/embedded-app/design-requirements/#device-icon
+ICON_NANOS = icons/app_zknox_16px.gif
 ICON_NANOX = icons/app_zknox_14px.gif
 ICON_NANOSP = icons/app_zknox_14px.gif
 ICON_STAX = icons/app_zknox_32px.gif
 ICON_FLEX = icons/app_zknox_40px.gif
 ICON_APEX_P = icons/app_zknox_32px_apex.png
 
-ifeq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOX TARGET_NANOS2))
+ifeq ($(TARGET_NAME),$(filter $(TARGET_NAME),TARGET_NANOS TARGET_NANOX TARGET_NANOS2))
     ICON_HOME_NANO = glyphs/home_zknox_14px.gif
 endif
 
@@ -196,8 +208,42 @@ PATH_APP_LOAD_PARAMS = "44'/1984'" "420'/1984'" "421'/1984'"
 VARIANT_PARAM = COIN
 VARIANT_VALUES = BOL
 
-# Use ARM Thumb-2 ASM for zkn_mont256 core functions.
+# Thumb-2 assembly for the zkn_mont256 core functions. The library drops the
+# request on a core without Thumb-2 (Nano S, ARMv6-M): there the
+# multiplication is the Thumb-1 assembly of src/zknox/src/zkn_mont/
+# zkn_mont256_armv6m.S, which enables itself, and the other core functions
+# stay in C (ZKN_MONT256_NO_ASM keeps the C multiplication,
+# ZKN_MONT256_NO_FIELD_PATHS its path for the two curve fields; DECISIONS.md,
+# ADR-009).
 DEFINES += ZKN_MONT256_ASM
+
+# What the app uses of the library, on every target: src/zkn_app_config.h,
+# which the library includes before its own defaults
+# (src/zknox/src/common/zkn_config.h). It holds the Poseidon tables linked for
+# the BN254 field (1, 3 and 5 inputs) and what ZKN_LOW_RAM means for the app.
+ZKN_APP_CONFIG := ZKN_CONFIG_FILE=\"zkn_app_config.h\"
+DEFINES += $(ZKN_APP_CONFIG)
+
+# Nano S: one switch. 4.6 KB of RAM for statics and stack together.
+# ZKN_LOW_RAM selects the low-RAM variants of the library (signing and the
+# threshold paths run in phases, one function per step, same results), and
+# the rest follows from it in two headers:
+#   src/zknox/src/common/zkn_config.h
+#       with BACKEND=sw, the fixed-base multiplication over the 16-entry
+#       table read from flash (64 steps, no table in RAM; ADR-004) and the
+#       blinded key scalar (72 steps for the public key; ADR-010). With
+#       BACKEND=cx the fixed-base multiplication is the one of ZKN_LOW_RAM
+#       alone: two windows, a randomized table in RAM.
+#   src/zkn_app_config.h
+#       the Poseidon context sized for 5 inputs, a quorum of at most 3
+#       signers, the public bulk of the ceremony state in NVRAM (ADR-003).
+# What depends on the chip or on its SDK follows the target with no switch:
+# the Thumb-1 multiplication, GCM built on the AES block syscall (the LNS cxng
+# has no cx_aes_gcm_*) and, with BACKEND=cx, the two work-arounds of the
+# coprocessor (ADR-011). DECISIONS.md, ADR-012.
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+DEFINES += ZKN_LOW_RAM
+endif
 
 ########################################
 #     Application custom permissions   #
@@ -244,7 +290,10 @@ ifeq ($(BACKEND),cx)
 else
     CFLAGS  += -DZKN_BN_BACKEND_SW
 endif
-CFLAGS  += -DZKN_MONT256_ASM
+CFLAGS  += -DZKN_MONT256_ASM -D$(ZKN_APP_CONFIG)
+ifeq ($(TARGET_NAME),TARGET_NANOS)
+CFLAGS  += -DZKN_LOW_RAM
+endif
 
 # Same belt-and-braces for ZKNOX_DEBUG: inject into CFLAGS directly so
 # DEFINES propagation through the SDK can't accidentally drop it.

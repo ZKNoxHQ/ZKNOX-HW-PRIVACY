@@ -60,6 +60,13 @@ endif
 # Mirrors the app Makefile: APPNAME and the version the GET_* handlers return.
 CFLAGS  += -DAES_VAR -DZKN_BN_BACKEND_SW -DUSE_ETHEREUM=0 -DUSE_KECCAK=1 -DAPPVERSION_M=0 -DAPPVERSION_N=1 -DAPPVERSION_P=0 -DAPPNAME=\"ZKNOX\"
 
+# Mirrors the app Makefile: what the app uses of the library, read by the
+# library before its own defaults (src/zkn_app_config.h, named to
+# src/zknox/src/common/zkn_config.h). The app sources and libzknox get the
+# same file, so both are built for the same Poseidon tables and bounds.
+ZKN_APP_CONFIG_FILE := $(abspath $(APP)/src/zkn_app_config.h)
+CFLAGS += -DZKN_CONFIG_FILE=\"zkn_app_config.h\"
+
 CFLAGS += -DSIM_VERSION=\"0.5.0\"
 CFLAGS += -include shim/include/sim_compat.h
 ifeq ($(SAN),1)
@@ -172,7 +179,7 @@ $(SIM_LIB): $(OBJS) $(ZKNOX_LIB)
 	@$(AR) -M < $(BUILD)/libzknoxsim.mri
 	@$(AR) s $@
 
-$(BUILD)/%.o: %.c Makefile
+$(BUILD)/%.o: %.c Makefile $(ZKN_APP_CONFIG_FILE)
 	@mkdir -p $(BUILD)
 	@echo "  CC   $<"
 	@$(CC) $(CFLAGS) $(INC) -c $< -o $@
@@ -181,14 +188,14 @@ $(BUILD)/%.o: %.c Makefile
 # simulator configuration. Build it with the selected gates, then immediately
 # copy the archive into this simulator configuration before another mode can
 # replace the shared output.
-ZKNOX_INPUTS := $(ZKNOX)/Makefile \
+ZKNOX_INPUTS := $(ZKNOX)/Makefile $(ZKN_APP_CONFIG_FILE) \
                 $(wildcard $(ZKNOX)/make/*.mk) \
                 $(wildcard $(ZKNOX)/src/*/*.c) \
                 $(wildcard $(ZKNOX)/src/*/*.h)
 $(ZKNOX_LIB): Makefile $(ZKNOX_INPUTS)
 	@mkdir -p $(BUILD)
 	$(MAKE) -C $(ZKNOX) clean
-	$(MAKE) -C $(ZKNOX) ZKNOX_DEBUG=$(if $(filter debug,$(MODE)),1,0) ZKN_FROST=$(FROST)
+	$(MAKE) -C $(ZKNOX) ZKNOX_DEBUG=$(if $(filter debug,$(MODE)),1,0) ZKN_FROST=$(FROST) ZKN_CONFIG_FILE=$(ZKN_APP_CONFIG_FILE)
 	@cp $(ZKNOX)/build/libzknox.a $@
 
 .PHONY: test test-sim-rs clean

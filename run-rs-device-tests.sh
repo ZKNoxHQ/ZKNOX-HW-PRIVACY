@@ -28,9 +28,10 @@
 # host-side, and the device's seed is the one thing here that cannot be set
 # from the outside. A device on another seed fails that check by name.
 #
-# Nothing is written to flash: the DKG share lives in RAM (see
-# src/zkn_features.h), so the ceremony leaves the device as it found it, bar
-# a power cycle.
+# No secret is written to flash: the DKG share lives in RAM (see
+# src/zkn_features.h) and a power cycle forgets it. On Nano S the public bulk
+# of the ceremony state is kept in an NVRAM scratch area
+# (src/handler/zkn_nv_scratch.h); on the other devices it is in RAM too.
 #
 #   HW_PARTICIPANT_ID=2 ./run-rs-device-tests.sh   device plays another id
 #   INTERACTIVE=1 ./run-rs-device-tests.sh         also the button-press test

@@ -171,6 +171,92 @@ share lives in RAM with no `nvm_write`, `FROST_HW_SIGN` releases `z_i` with
 no user confirmation, `DKG_FINALIZE` shows nothing — is in
 [src/zkn_features.h](src/zkn_features.h).
 
+### Nano S
+
+The original Nano S builds against the LNS SDK:
+
+```shell
+make -j BOLOS_SDK=$NANOS_SDK                         # MODE=prod
+make -j BOLOS_SDK=$NANOS_SDK MODE=debug              # FROST=0 unless asked
+make -j BOLOS_SDK=$NANOS_SDK MODE=debug FROST=1      # DKG and FROST
+```
+
+It has 4.6 KB of RAM and an ARMv6-M core, so the Makefile defines
+`ZKN_LOW_RAM` for it: same keys and signatures, smaller stack. That is the
+one switch of the port. What it brings is written in two headers,
+[src/zknox/src/common/zkn_config.h](src/zknox/src/common/zkn_config.h) for
+the library and [src/zkn_app_config.h](src/zkn_app_config.h) for the app,
+and what depends on the chip or on its SDK follows the target (ADR-012).
+With `FROST=1` the public part of the ceremony state (commitments, hashes,
+transport keys, the signing request) goes to an NVRAM scratch area and the
+secrets stay in RAM; the commands and their wire format are those of the other devices, up
+to 3-of-5. Details in [DECISIONS.md](DECISIONS.md), ADR-001 and ADR-003.
+
+`BACKEND=sw` is the default there and the faster backend. `BACKEND=cx` is
+available as on the other devices: 21 s per signature against 3.9 s, without
+the flash table and the blinded key scalar. It used to return wrong
+signatures on a Nano S and the Makefile refused it (ADR-005); Speculos could
+not have shown it: 0.25.5 is the last release with this model and it does
+not emulate `cx_mont_*` for it. The cause is the device. Its multiplications
+return a wrong value when the result bignum is also an operand, and the
+library converts to Montgomery form in place; and it leaves its Montgomery
+products unreduced, where the library compared some of them as bignums. The
+library works around both on this target and both curves sign correctly on
+the device (ADR-011): a self-test of the arithmetic, then the four device
+suites of `rs/`.
+
+Speed, on a Nano S with firmware 2.1.0: 28 s per signature with the C code of
+the first port. Two changes address it (ADR-004). The field multiplication is
+in Thumb-1 assembly, with the same number of cycles for every input, which
+the compiled C did not have on this core. The fixed-base multiplication reads
+its 16-entry table from flash and no longer keeps a randomized copy of a
+table in RAM, which halves its steps and removes the per-entry randomization;
+ADR-004 states the side-channel cost and how to go back. Measured with these
+two: 12.6 s per signature. Then the signer derives the public key itself,
+once, where the handler and the signer each derived it (ADR-006), and
+Poseidon comes from the library's tables, in Montgomery form in flash, with
+no round-constant generator at run time (ADR-007). Measured with both: 6.2 s
+per signature. Then, for the two fields the curves are defined over, the
+multiplication reduces with shifts and additions and takes three `MULS` per
+product, 192 instead of 520 (ADR-009), and the private scalar is blinded in
+the public key derivation (ADR-010): the key is multiplied as
+`s + lambda * l`, with a fresh 32-bit `lambda`, so that the entries read
+from the flash table differ from one signature to the next. Measured with
+both: 3.9 s per signature.
+The four device suites of `rs/` (`sign`, `dkg`, `frost_hw`, `ceremony`) pass
+on a Nano S in 129 s, the two ceremonies taking 97 s of it. On a Nano S Plus
+they take 16.8 s, at 0.41 s per signature.
+
+Stack left on the emulated device at the deepest command: 888 bytes of 3184
+without FROST, 288 of 2904 with it. Three scripts check the budget:
+
+```shell
+python3 tools/stackdepth.py build/nanos/bin/app.elf main validate_eddsa_poseidon_sign
+python3 tools/nanos_stack_hwm.py build/nanos/bin/app.elf    # Speculos running
+STACK_ELF=$PWD/build/nanos/bin/app.elf SIM_BIN=$PWD/tools/speculos_sim_bridge.py \
+    cargo test --manifest-path rs/Cargo.toml -p zknox-hw-tests \
+    --test dkg --test frost_hw -- --test-threads=1 --nocapture
+```
+
+The first gives the static worst case of a call chain from the disassembly
+(direct calls only). It follows every call of a function whatever its
+arguments, so the two DKG commands that derive the transport key through
+`derive_public_key` are charged the BabyJubjub branch they never take;
+`--cut derive_public_key:derive_pubkey_babyjubjub` gives their real depth.
+The second paints the stack of the emulated device and reports the
+high-water mark of each production command. The third does the same for the
+DKG and FROST commands while the Rust suite drives the emulated device; with
+`HW_PARTICIPANT_BIN` instead of `SIM_BIN` and `--test ceremony`, the device
+is one participant of a full ceremony (see [rs/README.md](rs/README.md)).
+
+`python3 src/zknox/tools/mont256_armv6m_check.py --elf build/nanos/bin/app.elf`
+runs the assembly multiplication, as a source file and as linked in the
+image, in a Cortex-M0+ emulator against the C algorithm, and counts its
+cycles. `python3 tools/nanos_cycle_profile.py build/nanos/bin/app.elf --clock 21.8`
+does it for a whole signature: it runs the SIGN_WITH_PRIVKEY handler of a
+debug image, checks the signature against the reference and gives the cycles
+per function, and the time at the clock the device measurements point to.
+
 ### Every device at once
 
 ```shell
@@ -275,6 +361,7 @@ commitments, and the aggregate under the circomlib equation.
 src/
 ├── app_main.c            APDU loop; any uncaught BOLOS exception exits fail-closed
 ├── constants.h  sw.h  types.h  globals.h  zkn_features.h
+├── zkn_app_config.h      what the app uses of ZKNOX-LibC, and what ZKN_LOW_RAM means for it
 ├── apdu/dispatcher.c     INS → handler, with RFU validation per instruction
 ├── handler/
 │   ├── handler_keys.c        signing pubkey derivation

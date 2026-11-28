@@ -35,7 +35,18 @@ static char g_pk_account[12];
 /* Hex of the pubkey: 64 B = 128 hex chars, plus a leading "0x" and NUL. */
 static char g_pk_hex[2 + 64 * 2 + 1];
 
-static nbgl_contentTagValue_t pairs[1];
+#if defined(TARGET_NANOS)
+/* LNS SDK (lib_nbgl at lns-2.1.0-v24.0): nbgl_useCaseAddressReview copies
+ * the whole additionalTagValueList struct over the pointer field of its
+ * context, which overwrites the title pointer with nbPairs and faults on the
+ * first page. On Nano S the same two fields go through the plain review:
+ * title, account, value, Approve / Reject. */
+#define PK_NB_PAIRS 2
+#else
+#define PK_NB_PAIRS 1
+#endif
+
+static nbgl_contentTagValue_t pairs[PK_NB_PAIRS];
 static nbgl_contentTagValueList_t pairList;
 
 static void review_choice(bool confirm)
@@ -100,6 +111,21 @@ int ui_display_pubkey_export(void)
     pairList.nbPairs = 1;
     pairList.pairs   = pairs;
 
+#if defined(TARGET_NANOS)
+    pairs[1].item  = G_context.pk_info.is_viewing ? "Viewing pubkey" : "Signing pubkey";
+    pairs[1].value = g_pk_hex;
+    pairList.nbPairs = 2;
+
+    nbgl_useCaseReview(TYPE_OPERATION,
+                       &pairList,
+                       &ICON_APP_MAIN,
+                       G_context.pk_info.is_viewing
+                           ? "Export\nviewing pubkey"
+                           : "Export\nsigning pubkey",
+                       NULL,
+                       NULL,
+                       review_choice);
+#else
     nbgl_useCaseAddressReview(g_pk_hex,
                               &pairList,
                               &ICON_APP_MAIN,
@@ -108,5 +134,6 @@ int ui_display_pubkey_export(void)
                                   : "Export\nsigning pubkey",
                               NULL,
                               review_choice);
+#endif
     return 0;
 }

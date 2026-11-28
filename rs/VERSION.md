@@ -246,3 +246,39 @@ random APDUs over 11 seeds, no finding.
   used when the one on PATH cannot see a library that is installed, and an
   explicit `PKG_CONFIG` or `CC` is never overridden. Both are scoped to the
   cargo invocation, so the simulator's own build keeps the toolchain it had.
+
+## 0.5.3 — 2026-11-25
+
+- `tests/ceremony.rs`: `HW_PARTICIPANT_BIN` names a program that takes the
+  device's seat (`HW_PARTICIPANT_ID`) in place of the USB link. It speaks the
+  simulator's protocol; `tools/speculos_sim_bridge.py` is one, forwarding to a
+  Speculos instance. This is how the Nano S build, which no simulator process
+  stands for, runs a ceremony before it runs on a device. See ADR-020.
+- `tests/ceremony.rs`: `a_ceremony_at_the_firmware_limits_signs_and_verifies`,
+  3-of-5 on the canonical seed with a ceremony name of the maximum length.
+  The quorum is drawn around the device's seat, so a device in the ceremony
+  signs whichever seat it takes.
+
+`hw-tests`: 31 tests, all passing on the simulator. With the emulated Nano S
+(`MODE=debug FROST=1`) as participant 1, then 4: both device ceremonies pass.
+
+`zknox-sim`: `the_review_screen_can_be_answered_both_ways_in_one_session`
+fails on this tree and on the commit it is based on. Its message, 32 bytes of
+`0x8c`, is not below the field modulus, and `BLIND_SIGN` now refuses such a
+message before the review (`6a80`). Left as found.
+
+## 0.5.4 — 2026-11-27
+
+- `tests/sign.rs`: `sign_with_privkey_on_bandersnatch_matches_the_reference`.
+  `SIGN_WITH_PRIVKEY` (0x50) on Bandersnatch with a fixed key, compared with
+  a fixed signature. The crate has no EdDSA on Bandersnatch to compute one
+  off-device, so the reference is the signature of ZKNOX-LibC since its
+  signer reduces modulo the order of the signing curve (pull request 4 of the
+  library). It satisfies `[S]B = R + [8h]A` under curve arithmetic written
+  apart from the library. Until then no test looked at a Bandersnatch
+  signature, and the one the firmware returned was not valid.
+
+`hw-tests`: 32 tests, all passing on the simulator. On the emulated Nano S
+(`MODE=debug FROST=1`) the new test passes, and it fails on the image built
+before the correction.
+
