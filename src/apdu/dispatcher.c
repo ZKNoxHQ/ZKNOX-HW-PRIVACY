@@ -69,10 +69,9 @@ int apdu_dispatcher(const command_t *cmd)
         // ─── Keys ────────────────────────────────────────────────────────
 
     case SIGNING_PUBKEY:
-        /* P1 = display / silent gate; P2 is RFU. */
-        if (cmd->p2 != 0) return io_send_sw(SW_WRONG_P1P2);
+        /* P1 = display / silent gate; P2 = curve, checked by the handler. */
         INIT_BUF_OR_FAIL();
-        return handler_signing_pubkey(&buf, cmd->p1);
+        return handler_signing_pubkey(&buf, cmd->p1, cmd->p2);
 
         // ─── Signing ─────────────────────────────────────────────────────
 

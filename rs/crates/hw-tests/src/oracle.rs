@@ -15,7 +15,10 @@ use frost_babyjubjub::eddsa::EddsaPoseidon;
 use frost_babyjubjub::key_agreement::{EngineEd25519KeyAgreement, KeyAgreement};
 
 use crate::hex::buf2hex;
-use crate::slip0010::{derive_path, master_key_from_seed, mnemonic_to_seed, Node};
+use crate::slip0010::{
+    derive_path, master_key_from_seed, master_key_from_seed_with, mnemonic_to_seed, Node,
+    BANDERSNATCH_SEED_KEY,
+};
 
 /// A signature in the device's wire layout: three 32-byte big-endian words.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,6 +81,15 @@ pub fn derived_spending_key(mnemonic: &str, account: u32) -> [u8; 32] {
 /// move the device off its mnemonic.
 pub fn derived_spending_key_from_seed(seed: &[u8], account: u32) -> [u8; 32] {
     let master: Node = master_key_from_seed(seed);
+    derive_path(&master, &path_spending(account)).chain_key
+}
+
+/// The private key the app signs with on Bandersnatch for `account`:
+/// [`path_spending`] under the `"bandersnatch seed"` master, where the
+/// BabyJubjub key of [`derived_spending_key`] is under `"babyjubjub seed"`.
+pub fn derived_bandersnatch_key(mnemonic: &str, account: u32) -> [u8; 32] {
+    let master: Node =
+        master_key_from_seed_with(&mnemonic_to_seed(mnemonic), BANDERSNATCH_SEED_KEY);
     derive_path(&master, &path_spending(account)).chain_key
 }
 

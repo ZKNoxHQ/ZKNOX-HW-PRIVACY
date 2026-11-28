@@ -2,6 +2,85 @@
 
 Architecture decisions for ZKNOX-HW-PRIVACY, newest first.
 
+## ADR-013: Bandersnatch signs with its own SLIP-0010 master and with the Poseidon of its field
+
+Date: 2026-11-27
+
+### Context
+
+Two things on Bandersnatch were those of BabyJubjub.
+
+The key. `BLIND_SIGN` derived one 32-byte seed per account, under the
+`"babyjubjub seed"` master, and used it as a private key on whichever curve
+P1 named. The same secret then signed on two curves, and no command returned
+the Bandersnatch public key.
+
+The hash. The challenge of EdDSA is a Poseidon over the base field of the
+curve, the BLS12-381 scalar field for Bandersnatch. The library computed it
+with the round constants and the matrix generated for BN254, read as integers
+of the other field. No other implementation computes that function. The port
+of Railgun to BLS12-381 and Bandersnatch hashes with the instance of that
+field, the one hadeshash defines and ZKNOX-Poseidons generates.
+
+### Decision
+
+1. The Bandersnatch signing key has its own SLIP-0010 master,
+   `HMAC-SHA512(key = "bandersnatch seed", data = seed)`, and the path of the
+   BabyJubjub key, `m/44'/1984'/account'/0'/0'`. SLIP-0010 names one master
+   per curve; this follows it. `KEY_TYPE_SPENDING_BANDERSNATCH` in
+   `src/zknox/src/keys/zkn_keyderivation.h`.
+2. `BLIND_SIGN` and `BLIND_SIGN_NO_DISPLAY` sign with the key of the curve in
+   P1. `SIGNING_PUBKEY` takes the curve in P2, with the same encoding: `0x00`
+   and `0x02` BabyJubjub, `0x01` Bandersnatch, anything else `0x6A86`.
+3. On Bandersnatch the challenge is hashed with the Poseidon instance of the
+   BLS12-381 scalar field, 255/6/8/60, in both backends (ZKNOX-LibC,
+   DECISIONS.md, ADR-004).
+4. Nothing else moves: the BabyJubjub key, its signatures, the viewing key,
+   the DKG transport key and the 0zk address stay under `"babyjubjub seed"`,
+   and the threshold ceremony stays on BabyJubjub.
+
+### Consequences
+
+- Bandersnatch keys and signatures are not those of earlier builds. BabyJubjub
+  ones are unchanged.
+- The review screens do not name the curve. That was already so for
+  `BLIND_SIGN`; it now also holds for `SIGNING_PUBKEY`, where the two curves
+  have different keys.
+- Every image changes. Code and data, against the images of ADR-012: 256
+  bytes more on Nano S and 512 on Nano S Plus with `BACKEND=sw`, 1.7 to 2.0 KB
+  more with `BACKEND=cx`, which carries the 36 coefficients of the new matrix.
+- The references of the tests come from a signer written apart from the
+  library: Python integers for the curve, BLAKE-512 from the `blake-hash`
+  package of circomlibjs, the Poseidon of ZKNOX-Poseidons, and SLIP-0010 with
+  the standard HMAC. It returns the circomlibjs signature on BabyJubjub. On
+  Bandersnatch it gives the signature of a fixed key, and for the test
+  mnemonic the key of the `"bandersnatch seed"` master, its public key and
+  its signature.
+- Checked against those references, `BACKEND=sw`: the simulator, the emulated
+  Nano S Plus and the emulated Nano S. On the two emulated devices the suites
+  `dkg`, `frost_hw` and `ceremony` pass as before.
+- Checked against those references, `BACKEND=cx`: a host model of `cx_bn`, in
+  the Nano S Plus configuration and in the Nano S one under the faults of
+  ADR-011, twelve values of twelve each, six random keys among them.
+- Not run: `BACKEND=cx` on a device. Speculos is of no help there: on the
+  emulated Nano S Plus the cx image of ADR-012 already returns signatures with
+  x equal to y on BabyJubjub.
+- The Rust suite has 34 tests on the simulator, two of them new
+  (`rs/VERSION.md`, 0.5.5). In `zknox-sim`, `SIGNING_PUBKEY` is listed as a
+  command whose handler checks both parameters, and the review-screen test
+  signs a message below the field: it had been failing since the handler
+  refuses the others.
+- Nano S stack with `FROST=1`, emulated: `BLIND_SIGN_NO_DISPLAY` 2320 bytes
+  of 2904 and `SIGN_WITH_PRIVKEY` 2248, as before; `SIGNING_PUBKEY` 2008.
+
+### Alternatives considered
+
+- The BabyJubjub master and another path for Bandersnatch. It separates the
+  keys as well, but one master per curve is the rule of SLIP-0010, and a new
+  path prefix has to be declared to BOLOS.
+- Keeping the BN254 constants over the BLS12-381 field. The circuits that
+  verify these signatures hash with the instance of the field.
+
 ## ADR-012: one switch for the Nano S port, `ZKN_LOW_RAM`
 
 Date: 2026-11-27

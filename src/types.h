@@ -20,11 +20,12 @@ typedef enum
     // ─── Keys ────────────────────────────────────────────────────────
     //
     // SIGNING_PUBKEY (0x01) — twisted-Edwards signing pubkey for an
-    // account index. This is the key BLIND_SIGN (0x12) signs with.
+    // account index. This is the key BLIND_SIGN (0x12) signs with on the
+    // curve asked for.
     //   APDU data (4 B): account(4 BE)
     //   P1 = 0x00  silent (DEBUG builds only)
     //   P1 = 0x01  display-and-confirm; returns the key on Approve
-    //   P2 = 0x00  reserved
+    //   P2 = curve: 0x00 or 0x02 BabyJubjub, 0x01 Bandersnatch
     //   Response: x(32) || y(32), big-endian
     SIGNING_PUBKEY = 0x01,
 

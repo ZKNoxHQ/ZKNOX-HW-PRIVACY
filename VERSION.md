@@ -4,6 +4,29 @@
 
 Date: 2026-11-27
 
+### Bandersnatch: its own SLIP-0010 master, the Poseidon of its field
+
+- On Bandersnatch `BLIND_SIGN` now signs with the key of the
+  `"bandersnatch seed"` master, on the path of the BabyJubjub key. It used
+  the BabyJubjub key itself. See [DECISIONS.md](DECISIONS.md), ADR-013.
+- `SIGNING_PUBKEY` takes the curve in P2 (`0x00` or `0x02` BabyJubjub, `0x01`
+  Bandersnatch) and returns the key `BLIND_SIGN` signs with on that curve.
+- The challenge of a Bandersnatch signature is hashed with the Poseidon
+  instance of the BLS12-381 scalar field, 255/6/8/60, in both backends. It
+  was hashed with the BN254 constants read over that field.
+- Bandersnatch keys and signatures change. BabyJubjub keys and signatures,
+  the viewing key, the DKG transport key, the 0zk address and the threshold
+  ceremony do not.
+- References from a signer written apart from the library; it returns the
+  circomlibjs signature on BabyJubjub. Checked with `BACKEND=sw` on the
+  simulator, the emulated Nano S Plus and the emulated Nano S, and with
+  `BACKEND=cx` on a host model of `cx_bn` in both configurations. Not run
+  with `BACKEND=cx` on a device.
+- `rs/`: 34 tests on the simulator. `zknox-sim`: the dispatcher table follows
+  the new P2, and the review-screen test signs a message below the field.
+- Images: 256 to 512 bytes more with `BACKEND=sw`, 1.7 to 2.0 KB with
+  `BACKEND=cx`.
+
 ### One switch for the Nano S port: `ZKN_LOW_RAM`
 
 - The Makefile sets `ZKN_LOW_RAM` on Nano S and nothing else for that

@@ -132,13 +132,18 @@ Two secrets, neither exportable:
 
 | Key | Path | Curve | Used by |
 |-----|------|-------|---------|
-| signing | `m/44'/1984'/account'/0'/0'` | twisted Edwards | `BLIND_SIGN`, DKG coefficients |
+| signing | `m/44'/1984'/account'/0'/0'` | BabyJubjub | `BLIND_SIGN`, DKG coefficients |
+| signing | same path, master under `"bandersnatch seed"` | Bandersnatch | `BLIND_SIGN` with P1 = `0x01` |
 | DKG transport | `m/421'/1984'/account'/0'/0'` | Ed25519 | share encryption, never leaves |
 
 All levels are hardened; the path is firmware-fixed and the host supplies
 only the account index. The constants live in the libC
 (`src/zknox/src/keys/zkn_keyderivation.h`) so that every ZKNOX app derives
-the same key from the same seed for a given account.
+the same key from the same seed for a given account. Derivation is SLIP-0010
+under the `"babyjubjub seed"` master, and under `"bandersnatch seed"` for the
+Bandersnatch signing key: one master per signing curve, as SLIP-0010 does
+for the curves it names. On Bandersnatch the signature is hashed with the
+Poseidon instance of the BLS12-381 scalar field (ADR-013).
 
 The DKG transport identity is deliberately *not* a child of any exportable
 path: possession of a scanning key must not be enough to derive it.

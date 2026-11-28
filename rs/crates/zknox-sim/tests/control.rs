@@ -121,7 +121,9 @@ fn the_default_seed_comes_back() {
 #[test]
 fn the_review_screen_can_be_answered_both_ways_in_one_session() {
     let mut sim = Sim::lock();
-    let msg = [0x8cu8; 32];
+    // Little endian, and below the base field: the handler refuses the rest.
+    let mut msg = [0x8cu8; 32];
+    msg[31] = 0x0c;
     let mut data = account_be(ACCOUNT).to_vec();
     data.extend_from_slice(&msg);
     let apdu = build_apdu(INS_BLIND_SIGN, CURVE_BABYJUBJUB_LEGACY, 0, &data);

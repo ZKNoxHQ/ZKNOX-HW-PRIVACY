@@ -64,7 +64,7 @@ impl Gate {
 /// The switch of `apdu_dispatcher`, transcribed. A new instruction that does
 /// not appear here fails the sweep, which is the point.
 const TABLE: &[(u8, Rfu, Gate)] = &[
-    (INS_SIGNING_PUBKEY, Rfu::P2Only, Gate::Always),
+    (INS_SIGNING_PUBKEY, Rfu::Neither, Gate::Always),
     (INS_BLIND_SIGN, Rfu::P2Only, Gate::Always),
     (INS_VIEWING_PUBKEY, Rfu::P2Only, Gate::Always),
     (INS_VIEWING_PRIVKEY, Rfu::Both, Gate::Always),
